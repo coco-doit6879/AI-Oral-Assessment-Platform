@@ -1,11 +1,26 @@
 import json
 import logging
+import sys
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from app import ai, diagnostics
+from app import ai, diagnostics, speech
+
+
+def test_whisper_auto_threads_keeps_one_inference_worker(monkeypatch):
+    calls = []
+    monkeypatch.setattr(speech, "settings", lambda: SimpleNamespace(stt_cpu_threads=0))
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(
+        WhisperModel=lambda *args, **kwargs: calls.append((args, kwargs)) or object()))
+    speech.model.cache_clear()
+    try:
+        model = speech.model("base")
+        assert speech.model("base") is model
+        assert calls == [(("base",), {"device": "cpu", "compute_type": "int8", "cpu_threads": 0, "num_workers": 1})]
+    finally:
+        speech.model.cache_clear()
 
 
 def records(caplog):

@@ -19,6 +19,12 @@ hình cho cả lượt thi khi bật; camera nằm trong khung hiển thị đú
 **Lượt thi gần đây → Xem bài** mở đúng lượt sinh viên được chọn.
 [Editor và ghi hình](docs/architecture/question-editor-recording.md).
 
+Chi tiết bài thi chia tab **Tổng quan & điểm / Câu trả lời / Màn hình & giám
+sát**; admin có **Log xử lý** và menu **Log hệ thống** để tra API, lỗi web,
+AI và worker theo request/tác vụ/lượt thi. Điều phối kỳ thi hiển thị số sinh
+viên, số lượt thi và mở trực tiếp bài từng lượt từ danh sách thí sinh.
+[Xem bài và chẩn đoán](docs/architecture/review-diagnostics.md).
+
 ## Hướng dẫn theo nhu cầu
 
 | Bạn muốn làm gì? | Tài liệu |

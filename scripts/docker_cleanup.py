@@ -12,6 +12,8 @@ BUILDER = "oral-assessment-web-jenkins"
 REPOSITORIES = {"api": "oral-assessment-api", "web": "oral-assessment-web"}
 CHECK_REPOSITORY = "oral-assessment-web-check"
 SNAPSHOT = Path(".data/jenkins/previous-images.json")
+CACHE_MAX_AGE = "168h"
+CACHE_MAX_SIZE = "10GB"
 CONTAINER_FORMAT = (
     '{"id":{{json .Id}},"image":{{json .Image}},'
     '"reference":{{json .Config.Image}},"name":{{json .Name}},'
@@ -155,6 +157,21 @@ def verify_deployment(rows, current):
             raise RuntimeError(f"Current {name} is not healthy; nothing cleaned.")
 
 
+def prune_cache():
+    # Keep warm dependency layers. Age and size are separate passes: an age
+    # filter on the size pass would prevent eviction of recent, oversized cache.
+    help_text = docker("buildx", "prune", "--help")
+    if "--max-used-space" in help_text:
+        size_flag = "--max-used-space"
+    elif "--keep-storage" in help_text:
+        size_flag = "--keep-storage"
+    else:
+        raise RuntimeError("Buildx lacks bounded cache pruning; cache left intact. Upgrade Buildx.")
+    docker("buildx", "prune", "--builder", BUILDER, "--filter", f"until={CACHE_MAX_AGE}", "--force")
+    docker("buildx", "prune", "--builder", BUILDER, size_flag, CACHE_MAX_SIZE, "--force")
+    print(f"OralAI cache: removed unused records older than {CACHE_MAX_AGE}; size target {CACHE_MAX_SIZE}.")
+
+
 def clean():
     saved = json.loads(SNAPSHOT.read_text())
     if saved.get("build") != os.environ["ORAL_TAG"]:
@@ -204,8 +221,8 @@ def clean():
             docker("image", "rm", row["id"])
             print("Removed untagged OralAI image:", row["id"])
     # Cache is isolated in this builder; never prune the shared/default daemon cache.
-    docker("buildx", "prune", "--builder", BUILDER, "--all", "--force")
-    print("Pruned OralAI builder cache. Docker disk usage:")
+    prune_cache()
+    print("Docker disk usage:")
     print(docker("system", "df"))
 
 

@@ -92,3 +92,13 @@ Khởi động server bằng `docker compose up -d --build --wait`; service migr
 ## Đợt thi theo lớp (migration 0010)
 
 Ngoài kỳ thi độc lập, admin/khảo thí tạo lớp theo môn, phân công giáo viên, nhập danh sách rồi tạo đợt từ đề đã công bố. Đợt thi của lớp không xuất hiện trong danh sách Điều phối kỳ thi; quản lý tại **Lớp học → Đợt thi & kết quả**. Mỗi đợt giữ snapshot đề, roster và lịch riêng; giáo viên chỉ xem/chấm lớp được phân công. [Chi tiết](academic-classes.md).
+
+
+## Danh sách thí sinh và xem bài — 25/10/2026
+
+Thẻ kỳ thi có `participant_count` và `sitting_count`, truy vấn tổng hợp theo
+các kỳ thi thuộc phạm vi người dùng. Nút Danh sách thí sinh mở trực tiếp tab
+Sinh viên & lịch thi; có tìm kiếm tên/MSSV/email, cột Số lượt thi, bộ lọc đã
+nộp bài và các nút Xem bài lần N. Chỉ đếm phiên chưa xóa, khác DEVICE_CHECK.
+Roster tự cập nhật 10 giây khi đang hiển thị; xem bài dùng ReviewPage chia
+tab và quay lại giữ bộ lọc. [Chi tiết](review-diagnostics.md).

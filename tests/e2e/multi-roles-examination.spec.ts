@@ -143,7 +143,9 @@ for (const width of [1440, 390]) {
     await expect(
       page.getByRole("link", { name: "Tải template Excel" }),
     ).toBeVisible();
-    await page.getByLabel("Chọn tất cả", { exact: true }).check();
+    await page
+      .getByLabel("Chọn tất cả sinh viên chưa tạo phiên thi", { exact: true })
+      .check();
     await expect(
       page.getByLabel("Chọn Sinh viên An", { exact: true }),
     ).toBeChecked();

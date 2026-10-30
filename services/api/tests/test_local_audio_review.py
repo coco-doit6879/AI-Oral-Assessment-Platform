@@ -28,7 +28,8 @@ def ready(env):
 
 
 @pytest.mark.parametrize("pronounce", [False, True])
-def test_full_local_review_pins_models_avoids_cloud_and_preserves_evidence(env, monkeypatch, pronounce):
+@pytest.mark.parametrize("threads", [0, 3])
+def test_full_local_review_pins_models_avoids_cloud_and_preserves_evidence(env, monkeypatch, pronounce, threads):
     context, session, attempt_id, audio, blob = ready(env)
     with env[1]() as db:
         exam = db.get(Exam, context["exam"]["id"])
@@ -38,6 +39,7 @@ def test_full_local_review_pins_models_avoids_cloud_and_preserves_evidence(env, 
     cfg = settings()
     monkeypatch.setattr(cfg, "local_review_llm_model", "local-test-model")
     monkeypatch.setattr(cfg, "gopt_enabled", True)
+    monkeypatch.setattr(cfg, "local_llm_cpu_threads", threads)
     path = f"/admin/attempts/{attempt_id}/local-review"
     body = {"reason": "Regrade everything from original audio"}
     for role in ("teacher", "reviewer", "student", "outsider"):
@@ -56,7 +58,11 @@ def test_full_local_review_pins_models_avoids_cloud_and_preserves_evidence(env, 
     def ollama(operation, payload):
         order.append("llm")
         assert operation == "chat" and payload["model"] == "local-test-model"
-        assert payload["options"]["num_thread"] == 1 and payload["options"]["num_gpu"] == 0
+        assert payload["options"]["num_gpu"] == 0
+        if threads:
+            assert payload["options"]["num_thread"] == threads
+        else:
+            assert "num_thread" not in payload["options"]
         assert payload["keep_alive"] == 0
         data = json.loads(payload["messages"][1]["content"])
         assert data["transcript"] == "Freshly recognized answer"
@@ -156,6 +162,59 @@ def test_local_review_requires_configuration_and_rejects_deleted_session(env, mo
         db.get(ExamSession, session["id"]).deleted_at = time.time()
         db.commit()
     assert env[0]["admin"].post(path, json=body).status_code == 404
+
+
+@pytest.mark.parametrize("problem,reason", [
+    ("disabled", "GOPT_DISABLED"), ("language", "LANGUAGE_UNSUPPORTED"),
+    ("timeout", "GOPT_TIMEOUT"), ("connect", "GOPT_CONNECTION_FAILED"),
+    (422, "GOPT_INPUT_REJECTED"), (429, "GOPT_BUSY"), (503, "GOPT_HTTP_ERROR"),
+])
+def test_real_pronunciation_failure_visible_in_admin_error_logs(env, monkeypatch, problem, reason):
+    context, session, attempt_id, _, _ = ready(env)
+    cfg = settings()
+    monkeypatch.setattr(cfg, "local_review_llm_model", "local-test-model")
+    monkeypatch.setattr(cfg, "gopt_enabled", problem != "disabled")
+    with env[1]() as db:
+        exam = db.get(Exam, context["exam"]["id"])
+        exam.snapshot = exam.snapshot | {"criteria": CRITERIA[1:],
+                                        "speech_language": "vi" if problem == "language" else "en"}
+        before = db.get(Attempt, attempt_id).assessment
+        db.commit()
+    client = env[0]["admin"]
+    job = ok(client.post(f"/admin/attempts/{attempt_id}/local-review",
+                         json={"reason": "Check pronunciation"}), 202)
+    monkeypatch.setattr(speech, "transcribe_file", lambda *args: {
+        "transcript": "private-student-answer", "stt_confidence": 0.9})
+
+    def gopt(request):
+        if problem in {"disabled", "language"}:
+            pytest.fail("Preflight must not call GOPT")
+        if problem in {"timeout", "connect"}:
+            error = httpx.ReadTimeout if problem == "timeout" else httpx.ConnectError
+            raise error("private-provider-error", request=request)
+        return httpx.Response(problem, json={"detail": "private-provider-error"})
+
+    original_client = httpx.Client
+    monkeypatch.setattr(pronunciation.httpx, "Client",
+                        lambda **kwargs: original_client(transport=httpx.MockTransport(gopt), **kwargs))
+    assert worker.tick()
+    with env[1]() as db:
+        review = db.get(ReviewJob, job["id"])
+        assert review.status == "FAILED"
+        assert review.error.startswith("PRONUNCIATION_FAILED:")
+        assert pronunciation.FAILURE_MESSAGES[reason] in review.error
+        assert job["id"] in review.error
+        assert db.get(Attempt, attempt_id).assessment == before
+        assert review.result is None
+    rows = ok(client.get("/admin/diagnostics", params={
+        "correlation": job["id"], "source": "AI", "level": "ERROR", "model": "gopt-librispeech",
+    }))["items"]
+    failure = next(row for row in rows if row["details"]["stage"] == "gopt.pronunciation")
+    assert failure["details"]["code"] == "PRONUNCIATION_FAILED"
+    assert failure["details"]["reason_code"] == reason
+    assert failure["details"]["session_id"] == session["id"]
+    assert failure["details"]["attempt_id"] == attempt_id
+    assert "private-" not in str(rows)
 
 
 def test_local_retrieval_uses_only_frozen_course_and_document_scope(env, monkeypatch):

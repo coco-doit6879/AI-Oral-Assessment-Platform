@@ -12,6 +12,8 @@ test("published exam supports manual and Excel additions and opens completed att
     course_name: "English",
     teacher_id: "teacher",
     time_limit: 900,
+    participant_count: 2,
+    sitting_count: 1,
   };
   const roster = [
     {
@@ -116,9 +118,14 @@ test("published exam supports manual and Excel additions and opens completed att
     .getByRole("button", { name: "Điều phối kỳ thi", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Mở kỳ thi English final", exact: true })
+    .getByRole("button", {
+      name: "Danh sách thí sinh English final",
+      exact: true,
+    })
     .click();
-  await page.getByRole("button", { name: /^Sinh viên & lịch thi/ }).click();
+  await expect(
+    page.getByRole("button", { name: /^Sinh viên & lịch thi/ }),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(
     page.getByRole("combobox", { name: "Lớp học phần", exact: true }),
   ).toBeVisible();
@@ -157,6 +164,14 @@ test("published exam supports manual and Excel additions and opens completed att
   await expect(
     page.getByLabel("Chọn Nguyễn An", { exact: true }),
   ).toBeDisabled();
+  await expect(
+    page.getByRole("columnheader", { name: "Số lượt thi" }),
+  ).toBeVisible();
+  await page.getByLabel("Tìm sinh viên theo tên, MSSV hoặc email").fill("SV01");
+  await expect(
+    page.getByText("waiting@example.edu", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("Tìm sinh viên theo tên, MSSV hoặc email").fill("");
   await page.getByLabel(/Chỉ sinh viên đã nộp bài/).check();
   await expect(
     page.getByText("waiting@example.edu", { exact: true }),
@@ -165,6 +180,7 @@ test("published exam supports manual and Excel additions and opens completed att
   await expect(
     page.getByRole("heading", { name: "English final · Lần 1" }),
   ).toBeVisible();
+  await page.getByRole("button", { name: /^Câu trả lời/ }).click();
   await expect(
     page.getByText("My original answer", { exact: true }),
   ).toBeVisible();

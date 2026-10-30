@@ -67,6 +67,7 @@ test("long rubric feedback is collapsed with full text available and scores inta
     .click();
   await selectResultExam(page);
   await page.getByRole("button", { name: "Xem bài →" }).click();
+  await page.getByRole("button", { name: /^Câu trả lời/ }).click();
   const assessment = page.locator(".assessment");
   await expect(assessment.locator(".score")).toContainText("8");
   await expect(

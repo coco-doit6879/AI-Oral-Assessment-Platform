@@ -1,6 +1,28 @@
+import json
+import sys
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
-from engine import canonical_words, inputs, word_chunks
+from engine import Engine, canonical_words, inputs, word_chunks
+
+
+def test_engine_uses_torch_default_parallelism(monkeypatch, tmp_path):
+    # A minimal torch adapter deliberately has no thread-setting API.
+    torch = SimpleNamespace(load=lambda *args, **kwargs: {})
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setenv("GOPT_ASSETS", str(tmp_path))
+    monkeypatch.setattr("engine.phone_inventory", lambda path: ({}, {}, {}))
+    monkeypatch.setattr("engine.read_lexicon", lambda path: {})
+    (tmp_path / "training_phones.json").write_text(json.dumps({str(i): i for i in range(39)}))
+    (tmp_path / "manifest.json").write_text(json.dumps({"gopt_revision": "test"}))
+    (tmp_path / "gopt_model.py").write_text(
+        "class GOPT:\n"
+        "    def __init__(self, **kwargs): pass\n"
+        "    def load_state_dict(self, state, strict): assert strict\n"
+        "    def eval(self): self.evaluating = True\n")
+    engine = Engine()
+    assert engine.torch is torch and engine.model.evaluating
 
 
 def test_normalization_matches_training_and_does_not_normalize_padding():

@@ -16,6 +16,9 @@ from starlette.exceptions import HTTPException
 from . import (
     academic,
     desktop_policy,
+    diagnostic_routes,
+    diagnostic_store,
+    diagnostics,
     google_login,
     routes_admin,
     routes_exam,
@@ -79,9 +82,12 @@ async def boundary(request: Request, call_next):
             content={"error": {"code": "ORIGIN_DENIED", "message": "Origin không được phép", "details": {}}},
         )
     begin = time.monotonic()
+    exception_type = None
     try:
-        response = await call_next(request)
+        with diagnostics.context(request_id=request_id):
+            response = await call_next(request)
     except Exception as exc:
+        exception_type = type(exc).__name__
         log.error("request_failed request_id=%s type=%s", request_id, type(exc).__name__)
         response = JSONResponse(
             status_code=500,
@@ -93,6 +99,21 @@ async def boundary(request: Request, call_next):
                 }
             },
         )
+    resource_id = None
+    for key in ("session_id", "attempt_id", "exam_id", "key"):
+        value = request.path_params.get(key)
+        if value:
+            try:
+                resource_id = str(uuid.UUID(str(value)))
+                break
+            except ValueError:
+                pass
+    if request.url.path not in {"/admin/diagnostics", "/diagnostics/client", "/health"}:
+        diagnostic_store.append("API", "ERROR" if response.status_code >= 500 else "WARNING" if response.status_code >= 400 else "INFO", "request_finished", {
+            "request_id": request_id, "method": request.method, "exception_type": exception_type, "resource_id": resource_id,
+            "path": diagnostic_routes.route_template(request.app, request.url.path),
+            "http_status": response.status_code, "elapsed_seconds": round(time.monotonic() - begin, 3),
+        })
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Cache-Control"] = "no-store"
@@ -219,6 +240,7 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 
 from . import examination, excel_imports, result_roster, storage_management  # noqa: E402
 
+app.include_router(diagnostic_routes.router, tags=["Diagnostics"])
 app.include_router(result_roster.router, tags=["Results roster"])
 app.include_router(excel_imports.router, tags=["Excel imports"])
 app.include_router(storage_management.router, tags=["Storage management"])

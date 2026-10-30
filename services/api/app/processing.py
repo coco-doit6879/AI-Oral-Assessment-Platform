@@ -12,7 +12,7 @@ from pathlib import Path
 
 from sqlalchemy import and_, or_, select
 
-from . import speech, storage
+from . import diagnostics, speech, storage
 from .models import Attempt, Audit, Exam, ExamSession, ProcessingJob, Upload, uid
 
 log = logging.getLogger("oral.processing")
@@ -91,45 +91,49 @@ def tick(factory):
         attempt = db.scalar(select(Attempt).where(Attempt.id == job.attempt_id).with_for_update())
         session = db.get(ExamSession, attempt.session_id)
         exam = db.get(Exam, session.exam_id)
-        try:
-            if job.runs > 6:
-                raise RuntimeError("Worker repeatedly interrupted")
-            if job.stage == "STT":
-                audio = db.scalar(select(Upload).where(Upload.attempt_id == attempt.id,
-                    Upload.kind == "AUDIO", Upload.status == "COMPLETED").order_by(Upload.created_at, Upload.id))
-                if not audio or not audio.storage_key:
-                    raise ValueError("Audio unavailable")
-                content = storage.get(audio.storage_key)
-                if hashlib.sha256(content).hexdigest() != audio.sha256:
-                    raise ValueError("Audio checksum mismatch")
-                with tempfile.TemporaryDirectory(prefix="oral-submission-") as folder:
-                    path = Path(folder) / "answer.webm"
-                    path.write_bytes(content)
-                    result = speech.transcribe_file(path, job.policy)
-                if not result["transcript"].strip():
-                    raise ValueError("No speech")
-                attempt.transcript = result["transcript"]
-                attempt.stt_confidence = result["stt_confidence"]
-                job.result = result
-                job.status = "QUEUED_GRADING"
-            else:
-                attempt.assessment = grade_answer(db, exam, session, attempt,
-                    attempt.transcript, attempt.stt_confidence or 0)
-                attempt.status, job.status = "GRADED", "COMPLETED"
-            job.error = None
-            if (attempt.assessment or {}).get("pronunciation", {}).get("status") == "FAILED":
-                job.status = "FAILED"
-                job.error = "PRONUNCIATION_FAILED: Chưa chấm được phát âm. Có thể thử chấm lại."
-        except Exception as exc:
-            code, message = failure(exc) if job.stage == "GRADING" else (
-                "STT_FAILED", "Nhận dạng audio thất bại. Kiểm tra cấu hình STT, model, quota và bản ghi rồi thử lại.")
-            job.status, job.error = "FAILED", f"{code}: {message}"
-            attempt.status = "GRADED"
-            attempt.assessment = {"score": None, "confidence": None, "review_required": True,
-                "status": "FAILED", "error": code, "error_code": code, "reasoning_summary": message,
-                "criteria": [], "rubric_version": exam.snapshot["rubric_version"],
-                "knowledge_version": exam.snapshot["knowledge_version"]}
-            log.warning("submission_failed job=%s stage=%s type=%s", key, job.stage, type(exc).__name__)
+        with diagnostics.context(job_id=job.id, attempt_id=attempt.id, session_id=session.id, exam_id=exam.id):
+            diagnostics.event("submission_started", stage=job.stage)
+            try:
+                if job.runs > 6:
+                    raise RuntimeError("Worker repeatedly interrupted")
+                if job.stage == "STT":
+                    audio = db.scalar(select(Upload).where(Upload.attempt_id == attempt.id,
+                        Upload.kind == "AUDIO", Upload.status == "COMPLETED").order_by(Upload.created_at, Upload.id))
+                    if not audio or not audio.storage_key:
+                        raise ValueError("Audio unavailable")
+                    content = storage.get(audio.storage_key)
+                    if hashlib.sha256(content).hexdigest() != audio.sha256:
+                        raise ValueError("Audio checksum mismatch")
+                    with tempfile.TemporaryDirectory(prefix="oral-submission-") as folder:
+                        path = Path(folder) / "answer.webm"
+                        path.write_bytes(content)
+                        result = speech.transcribe_file(path, job.policy)
+                    if not result["transcript"].strip():
+                        raise ValueError("No speech")
+                    attempt.transcript = result["transcript"]
+                    attempt.stt_confidence = result["stt_confidence"]
+                    job.result = result
+                    job.status = "QUEUED_GRADING"
+                else:
+                    attempt.assessment = grade_answer(db, exam, session, attempt,
+                        attempt.transcript, attempt.stt_confidence or 0)
+                    attempt.status, job.status = "GRADED", "COMPLETED"
+                job.error = None
+                if (attempt.assessment or {}).get("pronunciation", {}).get("status") == "FAILED":
+                    job.status = "FAILED"
+                    job.error = "PRONUNCIATION_FAILED: Chưa chấm được phát âm. Có thể thử chấm lại."
+            except Exception as exc:
+                code, message = failure(exc) if job.stage == "GRADING" else (
+                    "STT_FAILED", "Nhận dạng audio thất bại. Kiểm tra cấu hình STT, model, quota và bản ghi rồi thử lại.")
+                job.status, job.error = "FAILED", f"{code}: {message}"
+                attempt.status = "GRADED"
+                attempt.assessment = {"score": None, "confidence": None, "review_required": True,
+                    "status": "FAILED", "error": code, "error_code": code, "reasoning_summary": message,
+                    "criteria": [], "rubric_version": exam.snapshot["rubric_version"],
+                    "knowledge_version": exam.snapshot["knowledge_version"]}
+                diagnostics.failed("submission." + job.stage, exc)
+                log.warning("submission_failed job=%s stage=%s type=%s", key, job.stage, type(exc).__name__)
+            diagnostics.event("submission_finished", stage=job.stage, status=job.status)
         job.updated_at, job.lease_until, job.token = time.time(), None, None
         db.add(Audit(event="ANSWER_PROCESSING_" + job.status,
                      details={"attempt_id": attempt.id, "stage": job.stage}))

@@ -316,12 +316,87 @@ let refreshing: Promise<Response> | null = null;
 export class ApiError extends Error {
   status: number;
   code?: string;
-  constructor(message: string, status: number, code?: string) {
+  requestId?: string;
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    requestId?: string,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.requestId = requestId;
   }
+}
+
+let clientLogWindow = 0;
+let clientLogCount = 0;
+export function reportWebEvent(
+  event: "request_failed" | "client_error" | "unhandled_rejection",
+  path = "/",
+  method = "GET",
+  http_status?: number,
+  request_id?: string,
+  view = "unknown",
+  exception_type?: string,
+) {
+  if (
+    typeof window === "undefined" ||
+    path.includes("diagnostics") ||
+    path.startsWith("/auth/")
+  )
+    return;
+  const now = Date.now();
+  if (now - clientLogWindow > 60000) {
+    clientLogWindow = now;
+    clientLogCount = 0;
+  }
+  if (clientLogCount++ >= 10) return;
+  // A separate best-effort request never recursively reports telemetry errors.
+  void fetch("/api/diagnostics/client", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...backendHeaders() },
+    body: JSON.stringify({
+      event,
+      view: [
+        "dashboard",
+        "courses",
+        "exams",
+        "results",
+        "users",
+        "settings",
+        "storage",
+        "logs",
+        "academic",
+        "classes",
+        "departments",
+        "examination",
+        "student",
+      ].includes(view)
+        ? view
+        : "unknown",
+      exception_type: exception_type
+        ? [
+            "Error",
+            "TypeError",
+            "RangeError",
+            "ReferenceError",
+            "SyntaxError",
+            "URIError",
+            "EvalError",
+          ].includes(exception_type)
+          ? exception_type
+          : "UnknownError"
+        : undefined,
+      path: path.split("?")[0].split("#")[0],
+      method,
+      http_status,
+      ...(/^[a-fA-F0-9-]{36}$/.test(request_id || "") ? { request_id } : {}),
+    }),
+  }).catch(() => {});
 }
 
 function canRetry(path: string, init: RequestInit) {
@@ -358,6 +433,14 @@ export async function api<T>(
         !canRetry(path, init) ||
         attempt >= 2
       ) {
+        if (!init.signal?.aborted)
+          reportWebEvent(
+            "request_failed",
+            path,
+            (init.method || "GET").toUpperCase(),
+            error instanceof ApiError ? error.status : 0,
+            error instanceof ApiError ? error.requestId : undefined,
+          );
         if (error instanceof TypeError)
           throw new Error(
             `Kết nối bị gián đoạn khi gửi ${(init.method || "GET").toUpperCase()} ${path}. Kiểm tra mạng rồi thử lại.`,
@@ -413,6 +496,7 @@ async function requestJSON<T>(
         ` [${(init.method || "GET").toUpperCase()} ${path} · HTTP ${response.status}${detail ? ` · ${detail}` : ""}]`,
       response.status,
       code,
+      requestId,
     );
   }
   return response.json();

@@ -72,6 +72,10 @@ for (const provider of ["local", "gemini", "google"]) {
       .click();
     await selectResultExam(page);
     await page.getByRole("button", { name: "Xem bài →" }).click();
+    await page.getByRole("button", { name: /^Câu trả lời/ }).click();
+    await page
+      .getByText("Nhận dạng, chấm lại AI & lịch sử", { exact: true })
+      .click();
     await page.getByText("Nhận dạng lại & chấm lại", { exact: true }).click();
     await page.getByLabel("Nhà cung cấp nhận dạng lại").selectOption(provider);
     await page
@@ -185,6 +189,7 @@ test("admin uploads Google JSON without changing the STT draft, then selects eit
       provider,
       language: "vi",
       preprocessing: "off",
+      desktop_download_allowed: false,
     })),
   );
 });

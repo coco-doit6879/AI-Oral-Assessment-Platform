@@ -1,3 +1,121 @@
+# Gỡ hạn mức tài nguyên AI, giữ chấm tuần tự — 26/10/2026
+
+- Thay cấu hình 3 CPU/4 GiB trước đó: bỏ quota CPU, RAM/swap và giới hạn PID
+  của Ollama, worker và GOPT. Các biến hạn mức cũ không còn áp vào Compose.
+- Giữ **một tác vụ chấm tại một thời điểm** bằng khóa worker/PostgreSQL,
+  một request Ollama/GOPT và một inference worker Whisper. Vẫn được chấm lại
+  bài đã chấm; không giới hạn số lần chấm trong lịch sử.
+- Ollama/Whisper tự chọn luồng tính toán; bỏ biến giới hạn OMP/BLAS/MKL khi
+  khởi chạy worker/GOPT và bỏ lệnh ép một luồng PyTorch trong engine GOPT.
+  Giữ timeout, giới hạn audio và kiểm tra dữ liệu.
+- Đã dọn các biến CPU/RAM trong `.env` local và `.env.example`, cập nhật
+  overlay/tài liệu. Cần deploy lại; **build lại image GOPT một lần** để bỏ
+  giới hạn luồng trong code image cũ. Jenkins hiện dùng GOPT build sẵn.
+- Chưa xác nhận cấu hình container trên server; không cam kết giới hạn mức
+  sử dụng RAM của một bài bằng cơ chế chấm tuần tự.
+- Kiểm thử đạt: **27 API**, **4 khóa worker trên PostgreSQL thật**,
+  **18 GOPT**, **9 deploy/Compose**; Ruff đạt. Ca PostgreSQL bị bỏ qua trong
+  lượt SQLite đã được chạy lại thành công trên database tạm.
+
+Chi tiết: [triển khai và kiểm tra](docs/jenkins.md#ai-không-giới-hạn-cpuram-chấm-tuần-tự--26102026).
+
+---
+
+# Worker/GOPT 4 GiB RAM và chấm tuần tự — 26/10/2026
+
+- Tăng RAM worker và GOPT lên **4 GiB mỗi container**, giữ **3 CPU** mỗi
+  dịch vụ. Ollama vẫn 3 CPU/4 GiB; giới hạn RAM+swap bằng RAM.
+- Chấm tuần tự với `WORKER_SERIAL=true`: mỗi tác vụ local chạy lần lượt
+  **Whisper → Ollama → GOPT**. Giữ khóa PostgreSQL và giới hạn một request
+  Ollama/GOPT; ba luồng tính toán không làm chấm ba bài đồng thời.
+- Đã cập nhật `.env` workspace, `.env.example`, cả hai overlay và tài liệu.
+  Cần sửa `WORKER_MEMORY=4g`, `GOPT_MEMORY=4g`, `WORKER_SERIAL=true` trong
+  credential Jenkins `oral-ai-env` rồi deploy. Giá trị RAM 2g cũ sẽ ghi đè
+  mặc định mới. Chưa xác nhận cấu hình container trên server.
+- Kiểm thử: **18 ca đạt, 1 bỏ qua** (cần PostgreSQL thật); Ruff đạt.
+
+---
+
+# Tăng CPU cho AI local — 26/10/2026
+
+- Ollama, worker chạy Whisper và GOPT: **3 CPU mỗi container**. Giữ RAM
+  tương ứng **4 / 2 / 2 GiB**, xử lý tuần tự, không dùng GPU.
+- Ollama dùng `LOCAL_LLM_CPU_THREADS=3`, Whisper `STT_CPU_THREADS=3`;
+  Compose không ép worker về 1 luồng khi bật GOPT. GOPT cho phép BLAS dùng
+  3 luồng; PyTorch/i-vector và Kaldi `nj` vẫn 1 theo engine hiện tại.
+- Đã cập nhật `.env` workspace (không đưa lên Git), `.env.example`, các
+  overlay và tài liệu. Cần cập nhật các biến CPU/luồng trong credential
+  Jenkins `oral-ai-env`; giá trị 1 cũ sẽ ghi đè mặc định mới. Không đổi
+  provider, model, timeout hoặc tự bật dịch vụ AI đang tắt.
+- Chưa xác nhận hạn mức container thực tế trên server. Không cần rebuild
+  image GOPT; cần triển khai API/worker mới và cấu hình Compose mới.
+- Kiểm thử: **23 ca API và 9 ca deploy đạt**, Ruff đạt.
+
+Chi tiết: [cấu hình CPU và kiểm tra sau deploy](docs/jenkins.md#mức-cpu-mới-cho-các-dịch-vụ-ai--26102026).
+
+---
+
+# Tối ưu thời gian Jenkins CI/CD — 26/10/2026
+
+- Giữ cache build giữa các lượt deploy; dọn cache không dùng trong 7 ngày và
+  áp dụng mục tiêu 10 GB thay cho xóa hết. Chỉ dọn builder riêng của OralAI;
+  giữ cơ chế bảo vệ image đang chạy và hai phiên bản API/web.
+- Tái sử dụng MinIO khi image có nhãn khớp đầu vào build; build lại khi thiếu
+  image/nhãn hoặc đầu vào thay đổi. Vẫn kiểm tra binary ở mỗi lượt.
+- PostgreSQL/Redis chỉ pull một lần; kiểm tra image trước khi dừng ứng dụng.
+  Log build hiển thị cache, log triển khai bổ sung thời gian từng thao tác.
+- Giữ test, backup database, migration và healthcheck. Không cần chỉnh
+  credential Jenkins hoặc cập nhật desktop.
+- Kiểm thử local: **25 ca đạt** (cleanup, MinIO, deploy/Compose). Chưa đo
+  thời gian trên Jenkins thật; lượt đầu cần tạo lại cache có thể vẫn chậm.
+
+Chi tiết: [vận hành Jenkins](docs/jenkins.md#giảm-thời-gian-cicd--26102026).
+
+---
+
+# Sửa log lỗi chấm phát âm — 25/10/2026
+
+- Lỗi tác vụ mới ghi mức **ERROR**, thay cho WARNING. Lỗi GOPT được phân
+  loại **AI**, kể cả lỗi xảy ra trước lời gọi HTTP; gắn model, mã tác vụ và
+  mã nguyên nhân cụ thể để lọc trong Log hệ thống.
+- Phân biệt GOPT đang tắt, ngôn ngữ không phải tiếng Anh, thiếu transcript,
+  lỗi audio/checksum, timeout, kết nối, HTTP và kết quả không hợp lệ.
+  Chấm lại hiển thị thông báo tương ứng; thất bại giữ nguyên đánh giá cũ.
+- Log lịch sử không đổi mức. Khi tra tác vụ cũ, chọn nguồn/mức **Tất cả**,
+  bỏ model, chọn **Tất cả log còn lưu**, nhập UUID và bấm **Lọc log**.
+- Kiểm thử: **48 ca đạt**, Ruff đạt; có kiểm tra chấm lại thất bại và đọc
+  lỗi qua API Log hệ thống theo mã tác vụ, model, nguồn AI, mức ERROR.
+- Cần triển khai API/worker; không cần migration hoặc build desktop. Chưa
+  xác minh nguyên nhân tác vụ `a7fcad7a-4973-42cc-88be-0979d49d6637` trên
+  server và chưa xác nhận triển khai bản sửa trên domain chính.
+
+Chi tiết: [chẩn đoán lỗi phát âm](docs/architecture/review-diagnostics.md#tra-lỗi-chấm-phát-âm-không-thấy-trên-giao-diện).
+
+---
+
+# Xem lại bài thi, log hệ thống và danh sách thí sinh — 25/10/2026
+
+- Chi tiết bài thi chia tab **Tổng quan & điểm**, **Câu trả lời**, **Màn hình
+  & giám sát**; admin có thêm **Log xử lý**. Chọn từng câu để xem, phần chấm
+  lại AI thu gọn; media dừng khi chuyển tab/câu.
+- Admin có menu **Log hệ thống**, lọc API/WEB/AI/WORKER theo mức log, model,
+  thời gian, request/tác vụ/lượt thi; xem metadata và tự làm mới. Log giữ tối
+  đa 7 ngày hoặc 10.000 sự kiện, không lưu prompt/bài làm/khóa API.
+- Điều phối kỳ thi hiển thị số sinh viên và lượt thi trên thẻ kỳ thi, mở
+  thẳng danh sách thí sinh; tìm theo tên/MSSV/email, xem số lượt và mở đúng
+  bài từng lượt. Danh sách tự cập nhật mỗi 10 giây. Số lượt không tính phiên
+  kiểm tra thiết bị và lượt đã xóa.
+- Kiểm thử: **226 API đạt, 10 bỏ qua; 26 UI và 6 Node đạt**. Ruff, ESLint,
+  TypeScript và production build đạt.
+- Cần triển khai đồng bộ API/worker/web; không cần migration mới. Log được
+  thu từ bản triển khai này, không nhập lại log cũ của container. Chưa xác
+  nhận triển khai bản này trên domain chính.
+
+Chi tiết: [xem bài và chẩn đoán](docs/architecture/review-diagnostics.md),
+[kiểm thử](docs/validation.md).
+
+---
+
 # Editor câu hỏi, ghi màn hình và mở đúng bài thi — 22/10/2026
 
 - Câu hỏi có editor định dạng chữ, danh sách và chèn ảnh. Mỗi câu có **Sửa

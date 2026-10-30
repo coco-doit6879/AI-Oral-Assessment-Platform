@@ -135,9 +135,17 @@ def exam_list(db: Session = Depends(get_db), user=Depends(staff)):
     query = select(Exam, Course).join(Course).where(Exam.workflow.is_(True), Exam.class_id.is_(None))
     if teacher_scope(user):
         query = query.where(visible_exams(user))
+    rows = db.execute(query.order_by(Exam.created_at.desc())).all()
+    ids = [e.id for e, _ in rows]
+    participants = dict(db.execute(select(Assignment.exam_id, func.count(Assignment.id)).where(
+        Assignment.exam_id.in_(ids)).group_by(Assignment.exam_id)).all())
+    sittings = dict(db.execute(select(ExamSession.exam_id, func.count(ExamSession.id)).where(
+        ExamSession.exam_id.in_(ids), ExamSession.deleted_at.is_(None),
+        ExamSession.status != "DEVICE_CHECK").group_by(ExamSession.exam_id)).all())
     return [{"id": e.id, "name": e.name, "status": e.status, "course_id": c.id,
-             "course_name": c.name, "teacher_id": c.owner_id, "imported": bool(e.imported_questions), "time_limit": e.time_limit}
-            for e, c in db.execute(query.order_by(Exam.created_at.desc()))]
+             "course_name": c.name, "teacher_id": c.owner_id, "imported": bool(e.imported_questions), "time_limit": e.time_limit,
+             "participant_count": participants.get(e.id, 0), "sitting_count": sittings.get(e.id, 0)}
+            for e, c in rows]
 
 
 @router.post("/admin/examination/exams", status_code=201)

@@ -30,8 +30,6 @@ Lỗi `LOCAL_REVIEW_NOT_CONFIGURED` là thiếu tên model chấm lại, không 
 ```dotenv
 ORAL_OLLAMA_ENABLED=true
 LOCAL_REVIEW_LLM_MODEL=qwen2.5:3b
-ORAL_OLLAMA_CPUS=1.0
-ORAL_OLLAMA_MEMORY=4g
 ```
 
 Triển khai Jenkinsfile mới rồi chạy **Build Now**. Pipeline chọn `docker-compose.ollama.yml`,
@@ -43,8 +41,8 @@ là `local`, pipeline cũng yêu cầu và chuẩn bị `LLM_MODEL`, `EMBEDDING_
 - API/worker tự dùng `http://ollama:11434` trên network `oral-assessment-web_default`.
 - Không publish port lên host, không dùng chung volume/network của SOS. Không sửa hay dừng
   `sos-ai-ollama`; model cùng tên được tải riêng, cần thêm dung lượng đĩa.
-- Ollama giới hạn mặc định 1 CPU, 4 GiB RAM, một model và một lượt suy luận;
-  worker giới hạn 1 CPU, 2 GiB RAM và xử lý tuần tự. Đây không phải giới hạn tổng RAM server.
+- Ollama, worker và GOPT không đặt quota CPU/RAM trong Compose. Ollama giữ
+  một model và một lượt suy luận; worker chấm tuần tự từng tác vụ.
   Không gắn GPU; review giải phóng model sau chấm. Nếu CPU chậm gây timeout,
   có thể tăng `LOCAL_LLM_TIMEOUT` trong credential, ví dụ `600`, thay vì tăng concurrency.
 - Không bật cloud model. Xem [cấu hình Ollama](https://docs.ollama.com/faq) và
@@ -78,6 +76,52 @@ Jenkins chọn thêm `docker-compose.gopt.yml`, kiểm tra image đã có và kh
 `oral-assessment-web-gopt-1` (không publish port). Thiếu image hoặc tải model thất bại
 sẽ chặn deployment trước bước dừng ứng dụng. Không tự build Kaldi trong mỗi lượt deploy.
 Xem [giới hạn và luồng GOPT](architecture/gopt.md).
+
+### AI không giới hạn CPU/RAM, chấm tuần tự — 26/10/2026
+
+Bản này thay cấu hình 3 CPU/4 GiB trước đó: bỏ `cpus`, `mem_limit`,
+`memswap_limit`, `pids_limit` khỏi Ollama, worker và GOPT. Các biến cũ
+`ORAL_OLLAMA_CPUS`, `ORAL_OLLAMA_MEMORY`, `WORKER_CPUS`, `WORKER_MEMORY`,
+`GOPT_CPUS`, `GOPT_MEMORY`, `GOPT_BLAS_THREADS` không còn được dùng để đặt
+hạn mức; có thể xóa khỏi credential `oral-ai-env`.
+
+- Hai overlay ép `WORKER_SERIAL=true`: một tác vụ chấm tại một thời điểm
+  trên các worker dùng cùng PostgreSQL, giữ khóa đến khi tác vụ kết thúc.
+  Chấm lại vẫn được phép; đây không phải giới hạn một lần chấm trong lịch sử.
+- Ollama giữ `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`; GOPT có
+  một process và khóa chặn request đồng thời. Whisper có một inference worker.
+- Ollama/Whisper dùng cấu hình luồng tự động (`LOCAL_LLM_CPU_THREADS=0`,
+  `STT_CPU_THREADS=0`); overlay ghi đè cả giá trị 1/3 cũ trong credential.
+  Worker/GOPT khởi chạy bằng `env -u` để bỏ biến OMP/BLAS/MKL/NumExpr giới hạn
+  luồng từ credential hoặc image cũ. GOPT mới không ép PyTorch dùng một luồng.
+- Không có quota container không có nghĩa một request luôn sử dụng hết CPU;
+  engine tự chọn mức song song trong một bài. Một bài vẫn có thể dùng nhiều
+  RAM. Giữ timeout, giới hạn audio, dung lượng `/tmp` của GOPT và các kiểm tra
+  dữ liệu; không bật GPU hoặc tăng số bài chấm đồng thời.
+
+**Triển khai GOPT:** Jenkins dùng image đã build sẵn, không tự build Kaldi.
+Để bỏ cả giới hạn PyTorch trong engine cũ, build lại image từ commit mới
+trên Docker host của Jenkins (dùng đúng tag trong `ORAL_GOPT_IMAGE`):
+
+```bash
+docker build --build-arg BUILD_JOBS=1 -t oral-assessment-gopt:cpu services/gopt
+```
+
+Sau đó deploy commit mới để tạo lại API/worker/GOPT/Ollama với Compose mới.
+Nếu chưa build lại GOPT, quota CPU/RAM vẫn được gỡ sau deploy nhưng PyTorch
+trong image cũ còn ép một luồng. `.env` workspace đã được dọn các biến hạn
+mức, không đưa vào Git và không thay thế toàn bộ credential production.
+
+Kiểm tra trên Docker host:
+
+```bash
+docker inspect --format '{{.Name}} CPU={{.HostConfig.NanoCpus}} quota={{.HostConfig.CpuQuota}} RAM={{.HostConfig.Memory}} swap={{.HostConfig.MemorySwap}}' oral-assessment-web-ollama-1 oral-assessment-web-worker-1 oral-assessment-web-gopt-1
+docker stats --no-stream oral-assessment-web-ollama-1 oral-assessment-web-worker-1 oral-assessment-web-gopt-1
+```
+
+`NanoCpus=0`, `Memory=0` nghĩa là Docker không đặt các hạn mức đó, không phải
+không được dùng tài nguyên. Vẫn chịu tài nguyên thực tế và giới hạn từ host/
+Docker daemon nếu có. Bản cập nhật không tự bật dịch vụ AI đang tắt.
 
 ## Jenkins Docker báo `python3: not found`
 
@@ -117,7 +161,7 @@ Kiểm tra dòng `Checking out Revision ... (refs/remotes/origin/...)`: nếu jo
 1. Commit và push thay đổi lên nhánh mà job theo dõi.
 2. Mở job Jenkins, bấm **Build Now** nếu job chưa được webhook kích hoạt.
 3. Trong **Console Output**, kiểm tra bước **Checkout** lấy đúng commit mong muốn.
-4. Theo dõi các bước **Prepare Docker builder → Build API → Test API - isolated SQLite → Build and check web → Deploy Oral web → Clean old Docker releases**.
+4. Theo dõi các bước **Prepare Docker builder → Build MinIO → Build API → Test API - isolated SQLite → Build and check web → Deploy Oral web → Clean old Docker releases**.
 5. Khi job báo `SUCCESS`, mở web quản trị và đăng nhập kiểm tra. Đóng rồi mở lại desktop để tải giao diện server mới.
 
 Test API lỗi sẽ chặn các bước build web và deploy tiếp theo. Không coi việc push thành công hoặc bước build image thành công là đã triển khai xong.
@@ -128,18 +172,30 @@ Sau khi web/API qua healthcheck và worker chạy đúng image của build mới
 
 - Giữ tối đa **2 phiên bản image API** (`oral-assessment-api`) và **2 phiên bản image web** (`oral-assessment-web`): bản vừa deploy và bản đang chạy trước đó. API dùng chung cho worker/migration. Nếu không có bản trước khác biệt còn tồn tại, lấy thêm image gần nhất theo thời gian tạo; các tag cùng ID tính là một phiên bản.
 - Xóa container đã dừng của project `oral-assessment-web`, container kiểm thử do pipeline tạo, image build/check cũ và image không còn tag có nhãn sở hữu OralAI.
-- Dọn cache của builder riêng `oral-assessment-web-jenkins`, dùng driver `docker-container`. Pipeline build bằng `buildx --load` để image có sẵn cho bước kiểm thử/deploy trên Docker daemon.
+- Giữ cache của builder riêng `oral-assessment-web-jenkins` (driver `docker-container`) để tái sử dụng dependency. Dọn cache không được dùng trong **168 giờ**, sau đó dọn theo dung lượng với mục tiêu **10 GB**, ưu tiên bỏ cache ít được dùng gần đây. Hai lượt dọn riêng biệt để giới hạn dung lượng vẫn áp dụng cho cache mới. Cache đang được dùng có thể không dọn được; đây không phải giới hạn cứng cho toàn bộ Docker disk. Pipeline build bằng `buildx --load` để image có sẵn cho kiểm thử/deploy.
 - In `docker system df` để theo dõi dung lượng sau dọn.
 
 Pipeline chụp ID/reference của image đang chạy ngay trước bước deploy vào `.data/jenkins/previous-images.json`, gắn với đúng build. Image còn được bất kỳ container nào sử dụng sẽ được giữ; khi đó số phiên bản có thể lớn hơn hai và cần kiểm tra container đó. Các image hạ tầng PostgreSQL/Redis/MinIO, volume dữ liệu, backup database và tài nguyên thuộc project khác được giữ nguyên. Không dùng `docker system prune`, không xóa volume và không ép xóa image/container trong bước dọn.
 
 Stage dọn chỉ chạy sau deploy thành công. Nếu dọn gặp lỗi hoặc phát hiện ứng dụng không còn khỏe/đúng image, Jenkins báo **UNSTABLE** để kiểm tra; ứng dụng đã deploy tiếp tục chạy. Nếu build/deploy thất bại, pipeline chỉ dọn container test và image check của chính lượt chạy đó trong `post always`.
 
-Theo [Docker Buildx prune](https://docs.docker.com/reference/cli/docker/buildx/prune/), thao tác dọn áp dụng cho builder được chọn. Cache ở builder dùng chung từ các lượt build trước cần được quản trị riêng vì Docker không phân loại cache đó theo project. Từ pipeline này, cache mới của OralAI nằm trong builder riêng và được dọn sau deploy; lần build sau có thể lâu hơn do cần tải/build lại dependency. Chỉ một job Jenkins nên quản lý deployment và builder này; `disableConcurrentBuilds()` tuần tự hóa các lượt của job đó.
+Theo [Docker Buildx prune](https://docs.docker.com/reference/cli/docker/buildx/prune/), thao tác dọn áp dụng cho builder được chọn. Cache ở builder dùng chung từ các lượt build trước cần được quản trị riêng vì Docker không phân loại cache đó theo project. Từ bản sửa **26/10/2026**, không dùng `prune --all --force` không giới hạn sau mỗi deploy. Script dùng `--max-used-space` hoặc `--keep-storage` trên Buildx cũ; nếu không hỗ trợ cả hai, giữ cache và báo lỗi cleanup (UNSTABLE), không quay về xóa hết. Các giá trị nằm trong `CACHE_MAX_AGE` / `CACHE_MAX_SIZE` của script. Chỉ một job Jenkins nên quản lý deployment và builder này; `disableConcurrentBuilds()` tuần tự hóa các lượt của job đó.
 
 Giữ image trước hỗ trợ thao tác khôi phục ứng dụng, nhưng không tự rollback schema/database. Người vận hành cần kiểm tra tương thích migration trước khi đổi về phiên bản trước.
 
 Logic dọn nằm trong [docker_cleanup.py](../scripts/docker_cleanup.py), được kiểm tra bằng `python3 -m unittest discover -s tests -p test_docker_cleanup.py -v`. Các test dùng Docker giả lập, không dọn dữ liệu thật.
+
+## Giảm thời gian CI/CD — 26/10/2026
+
+- **Cache API/web:** dependency đã được cài ở các layer trước khi copy source. Giữ cache giúp không phải cài lại pip/npm khi chỉ đổi code; chỉnh lockfile vẫn cài lại đúng dependency. Không bỏ test API, lint/typecheck, backup, migration hay healthcheck.
+- **MinIO:** [build_minio.py](../scripts/build_minio.py) tính SHA-256 từ tên, quyền và nội dung file trong `services/minio`, so với nhãn `uk.paperlens.oral.minio-source` của image. Có image đúng nhãn thì dùng lại; thiếu image, thiếu nhãn hoặc đổi đầu vào thì build lại. Cả hai nhánh đều chạy `minio --version`. Image cũ chưa có nhãn sẽ build lại một lần. Khi cần cập nhật base image dù source không đổi, người vận hành rebuild MinIO theo quy trình cập nhật hạ tầng; nhãn này không kiểm tra bản mới của upstream/base image.
+- **Pull:** PostgreSQL/Redis được pull một lần ở stage **Check infrastructure images**; deploy kiểm tra image đã có trước khi dừng ứng dụng, dùng `--pull never`. Ollama vẫn có bước pull riêng khi bật; model chỉ tải khi chưa có trong volume.
+- **Đo thời gian:** build dùng `--progress=plain` để thấy `CACHED` và thời gian từng bước; các lệnh triển khai qua helper `command()` in nhãn thao tác cùng thời gian chạy, không in command/env/output có thể chứa bí mật. Dùng Stage View và Console Output để so sánh.
+
+Lượt đầu sau sửa có thể vẫn chậm vì cache cũ đã bị xóa. So sánh với lượt tiếp
+theo khi lockfile và đầu vào MinIO không đổi; không cam kết số phút trước khi
+đo trên Jenkins thật. Cache được giữ sẽ dùng thêm dung lượng đĩa so với cách
+xóa hết trước đây; kiểm tra cả dung lượng image, volume và backup độc lập.
 
 ## Chẩn đoán lỗi
 

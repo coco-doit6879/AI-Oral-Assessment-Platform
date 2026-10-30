@@ -42,6 +42,7 @@ import { TextbookPanel, TopicPanel } from "./knowledge";
 import PlatformSettings from "./platform-settings";
 import CourseStudents from "./course-students";
 import { QuestionContent } from "./question-content";
+import DiagnosticLogs from "./diagnostic-logs";
 import ExamDraftReview from "./exam-draft-review";
 import CourseHotwords from "./course-hotwords";
 import { TranscriptionReview } from "./transcription-review";
@@ -1805,7 +1806,11 @@ function ExamForm({
     </section>
   );
 }
-export function ReviewPage({
+export function ReviewPage(props: Parameters<typeof ReviewWorkspace>[0]) {
+  return <ReviewWorkspace key={props.review.id} {...props} />;
+}
+
+function ReviewWorkspace({
   canGrade,
   review,
   back,
@@ -1822,6 +1827,10 @@ export function ReviewPage({
   open: (id: string) => Promise<unknown>;
   backLabel?: string;
 }) {
+  const [tab, setTab] = useState("overview");
+  const [questionId, setQuestionId] = useState("");
+  const selectedQuestion =
+    review.attempts.find((a) => a.id === questionId) || review.attempts[0];
   const screens = review.attempts
     .flatMap((attempt) => attempt.evidence)
     .filter((file) => file.kind === "SCREEN")
@@ -1851,254 +1860,323 @@ export function ReviewPage({
         </div>
         <Badge status={review.status} />
       </div>
-      <section className="panel">
-        <label>
-          Lịch sử làm bài
-          <select
-            value={review.id}
-            onChange={(event) => void open(event.target.value)}
+      <nav className="review-tabs" aria-label="Các phần chi tiết bài thi">
+        {[
+          ["overview", "Tổng quan & điểm"],
+          ["answers", `Câu trả lời (${review.attempts.length})`],
+          ["monitoring", "Màn hình & giám sát"],
+          ...(admin ? [["logs", "Log xử lý"]] : []),
+        ].map(([id, title]) => (
+          <button
+            type="button"
+            key={id}
+            aria-pressed={tab === id}
+            onClick={() => setTab(id)}
           >
-            {(review.history || [review]).map((row) => (
-              <option key={row.id} value={row.id}>
-                Lần {row.attempt_number ?? 1} ·{" "}
-                {row.created_at
-                  ? new Date(row.created_at * 1000).toLocaleString("vi-VN")
-                  : ""}{" "}
-                ·{" "}
-                {row.final_score === null
-                  ? "Chưa xác nhận điểm"
-                  : `${row.final_score}/10`}
-              </option>
-            ))}
-          </select>
-        </label>
-        {admin && (
-          <ResultActions
-            key={review.id}
-            result={review}
-            refresh={refresh}
-            deleted={async () => back()}
-          />
-        )}
-      </section>
-      <div className="notice">
-        <strong>
-          Điểm chính thức:{" "}
-          {review.final_score === null
-            ? "Chưa xác nhận"
-            : `${review.final_score}/10`}
-        </strong>
-        <span>
-          Điểm từng câu do AI đề xuất. Bài cần xem lại chưa có điểm chính thức.
-        </span>
-      </div>
-      <ExamScore summary={review.score_summary} status={review.status} />
-      {review.processing && (
-        <div className="notice" role="status">
-          <Badge status={review.processing.status} />
+            {title}
+          </button>
+        ))}
+      </nav>
+      <div hidden={tab !== "overview"}>
+        <section className="panel">
+          <label>
+            Lịch sử làm bài
+            <select
+              value={review.id}
+              onChange={(event) => void open(event.target.value)}
+            >
+              {(review.history || [review]).map((row) => (
+                <option key={row.id} value={row.id}>
+                  Lần {row.attempt_number ?? 1} ·{" "}
+                  {row.created_at
+                    ? new Date(row.created_at * 1000).toLocaleString("vi-VN")
+                    : ""}{" "}
+                  ·{" "}
+                  {row.final_score === null
+                    ? "Chưa xác nhận điểm"
+                    : `${row.final_score}/10`}
+                </option>
+              ))}
+            </select>
+          </label>
+          {admin && (
+            <ResultActions
+              key={review.id}
+              result={review}
+              refresh={refresh}
+              deleted={async () => back()}
+            />
+          )}
+        </section>
+        <div className="notice">
+          <strong>
+            Điểm chính thức:{" "}
+            {review.final_score === null
+              ? "Chưa xác nhận"
+              : `${review.final_score}/10`}
+          </strong>
           <span>
-            Đã nhận dạng {review.processing.transcribed}/
-            {review.processing.total} câu · Đã xử lý{" "}
-            {review.processing.completed}/{review.processing.total} câu ·{" "}
-            {review.processing.failed} câu lỗi
+            Điểm từng câu do AI đề xuất. Bài cần xem lại chưa có điểm chính
+            thức.
           </span>
         </div>
-      )}
-      {review.media_removed_at && (
-        <p className="notice">
-          Bản ghi của lần thi đã được admin dọn để giải phóng dung lượng.
-          Transcript, điểm và lịch sử chấm vẫn được giữ.
-        </p>
-      )}
-      {screens.length > 0 && (
-        <section className="panel">
-          <h2>Giám sát màn hình toàn bài thi</h2>
-          <p className="muted">
-            Bản ghi được chia thành nhiều đoạn trong suốt lần thi. Chọn từng
-            đoạn để xem.
-          </p>
-          <ReviewEvidence key={review.id} evidence={screens} kind="SCREEN" />
-        </section>
-      )}
-      {!!review.proctoring_events?.length && (
-        <section className="panel">
-          <h2>Sự kiện giám sát bài thi</h2>
-          <p>Các sự kiện cần đối chiếu bản ghi; không tự kết luận gian lận.</p>
-          {review.proctoring_events.map((e) => (
-            <p key={e.id}>
-              {new Date(e.created_at * 1000).toLocaleString("vi-VN")} ·{" "}
-              {proctoringLabels[e.details.type] || e.details.type}
-            </p>
-          ))}
-        </section>
-      )}
-      {review.ai_score != null && (
-        <p className={review.ai_score < 5 ? "error" : "muted"}>
-          Điểm AI đề xuất: {review.ai_score}/10
-          {review.ai_score < 5
-            ? " — dưới 5, cần giảng viên chấm lại trước khi công bố"
-            : ""}
-        </p>
-      )}
-      {review.manual_review && (
-        <p>Nhận xét chấm lại: {review.manual_review.reason}</p>
-      )}
-      {canGrade && ["REVIEW_REQUIRED", "COMPLETED"].includes(review.status) && (
-        <section className="panel">
-          <h2>Giảng viên chấm lại</h2>
-          <Form
-            label="Lưu điểm chính thức"
-            onSubmit={async (d) => {
-              await send(`/admin/results/${review.id}/manual-grade`, {
-                score: Number(d.get("score")),
-                reason: d.get("reason"),
-              });
-              await refresh();
-            }}
-          >
-            <label>
-              Điểm chính thức (0–10)
-              <input
-                name="score"
-                type="number"
-                min="0"
-                max="10"
-                step="0.01"
-                required
-              />
-            </label>
-            <label>
-              Nhận xét và lý do chấm lại
-              <textarea
-                name="reason"
-                minLength={10}
-                maxLength={3000}
-                required
-              />
-            </label>
-          </Form>
-        </section>
-      )}
-      {review.attempts.map((a) => (
-        <section className="panel" key={a.id}>
-          <div className="section-title">
-            <h2>Câu {a.sequence}</h2>
-            <Badge status={a.status} />
+        <ExamScore summary={review.score_summary} status={review.status} />
+        {review.processing && (
+          <div className="notice" role="status">
+            <Badge status={review.processing.status} />
+            <span>
+              Đã nhận dạng {review.processing.transcribed}/
+              {review.processing.total} câu · Đã xử lý{" "}
+              {review.processing.completed}/{review.processing.total} câu ·{" "}
+              {review.processing.failed} câu lỗi
+            </span>
           </div>
-          <QuestionContent
-            text={a.question.text}
-            content={a.question.rich_content}
-          />
-          {a.processing && (
-            <div className="notice">
-              <Badge status={a.processing.status} />
-              {a.processing.error && (
-                <p role="alert" className="error">
-                  {a.processing.error}
-                </p>
-              )}
-              {canGrade && a.processing.status === "FAILED" && (
-                <Action
-                  className="button secondary"
-                  action={async () => {
-                    await send(`/admin/attempts/${a.id}/retry-processing`);
-                    await refresh();
-                  }}
-                >
-                  Thử xử lý lại
-                </Action>
-              )}
-            </div>
+        )}
+        {review.media_removed_at && (
+          <p className="notice">
+            Bản ghi của lần thi đã được admin dọn để giải phóng dung lượng.
+            Transcript, điểm và lịch sử chấm vẫn được giữ.
+          </p>
+        )}
+      </div>
+      {tab === "monitoring" && (
+        <div>
+          {!screens.length && (
+            <Empty>Không có bản ghi màn hình còn lưu cho lượt thi này.</Empty>
           )}
-          <div className="review-grid">
-            <div>
-              <span className="eyebrow">TRANSCRIPT SINH VIÊN ĐÃ NỘP</span>
-              <p className="transcript">
-                {a.transcript || "Chưa có câu trả lời"}
+          {screens.length > 0 && (
+            <section className="panel">
+              <h2>Giám sát màn hình toàn bài thi</h2>
+              <p className="muted">
+                Bản ghi được chia thành nhiều đoạn trong suốt lần thi. Chọn từng
+                đoạn để xem.
               </p>
-              <small className="muted">
-                Độ tin cậy STT:{" "}
-                {a.processing?.confidence_source === "unavailable"
-                  ? "Nhà cung cấp không trả độ tin cậy"
-                  : a.stt_confidence === null
-                    ? "—"
-                    : `${Math.round(a.stt_confidence * 100)}%`}
-              </small>
-              <ReviewEvidence evidence={a.evidence} kind="VIDEO" />
-              <ReviewEvidence evidence={a.evidence} kind="AUDIO" />
-            </div>
-            <div className="assessment">
-              <span className="eyebrow">ĐÁNH GIÁ THEO RUBRIC</span>
-              {a.assessment ? (
-                <>
-                  <div className="score">
-                    {a.assessment.score ?? "—"}
-                    <small>/ 10</small>
-                  </div>
-                  <RubricNote
-                    text={a.assessment.reasoning_summary}
-                    limit={240}
+              <ReviewEvidence
+                key={review.id}
+                evidence={screens}
+                kind="SCREEN"
+              />
+            </section>
+          )}
+          {!!review.proctoring_events?.length && (
+            <section className="panel">
+              <h2>Sự kiện giám sát bài thi</h2>
+              <p>
+                Các sự kiện cần đối chiếu bản ghi; không tự kết luận gian lận.
+              </p>
+              {review.proctoring_events.map((e) => (
+                <p key={e.id}>
+                  {new Date(e.created_at * 1000).toLocaleString("vi-VN")} ·{" "}
+                  {proctoringLabels[e.details.type] || e.details.type}
+                </p>
+              ))}
+            </section>
+          )}
+        </div>
+      )}
+      <div hidden={tab !== "overview"}>
+        {review.ai_score != null && (
+          <p className={review.ai_score < 5 ? "error" : "muted"}>
+            Điểm AI đề xuất: {review.ai_score}/10
+            {review.ai_score < 5
+              ? " — dưới 5, cần giảng viên chấm lại trước khi công bố"
+              : ""}
+          </p>
+        )}
+        {review.manual_review && (
+          <p>Nhận xét chấm lại: {review.manual_review.reason}</p>
+        )}
+        {canGrade &&
+          ["REVIEW_REQUIRED", "COMPLETED"].includes(review.status) && (
+            <section className="panel">
+              <h2>Giảng viên chấm lại</h2>
+              <Form
+                label="Lưu điểm chính thức"
+                onSubmit={async (d) => {
+                  await send(`/admin/results/${review.id}/manual-grade`, {
+                    score: Number(d.get("score")),
+                    reason: d.get("reason"),
+                  });
+                  await refresh();
+                }}
+              >
+                <label>
+                  Điểm chính thức (0–10)
+                  <input
+                    name="score"
+                    type="number"
+                    min="0"
+                    max="10"
+                    step="0.01"
+                    required
                   />
-                  {a.assessment.criteria?.map((c) => (
-                    <div className="criterion-score" key={c.name}>
-                      <strong>
-                        {c.name}: {c.score}
-                      </strong>
-                      <RubricNote text={c.comment} />
-                    </div>
-                  ))}
-                  <PronunciationScore result={a.assessment.pronunciation} />
-                  <small>
-                    {a.assessment.confidence == null ||
-                    a.assessment.error ||
-                    a.assessment.score == null
-                      ? "Chưa có độ tin cậy AI — chưa chấm thành công hoặc bài không tính điểm."
-                      : `Độ tin cậy do AI tự báo: ${Math.round(a.assessment.confidence * 100)}% (chưa được hiệu chuẩn)`}
-                  </small>
-                  {a.assessment.error_code && (
-                    <p className="error">Mã lỗi: {a.assessment.error_code}</p>
-                  )}
-                  {a.assessment.grading_exam_id && (
-                    <p className="notice">
-                      Đã chấm lại theo phiên bản đề mới; cần giảng viên xem lại.
-                      Chi tiết được lưu trong lịch sử bên dưới.
+                </label>
+                <label>
+                  Nhận xét và lý do chấm lại
+                  <textarea
+                    name="reason"
+                    minLength={10}
+                    maxLength={3000}
+                    required
+                  />
+                </label>
+              </Form>
+            </section>
+          )}
+      </div>
+      {tab === "logs" && admin && (
+        <DiagnosticLogs correlation={review.id} compact />
+      )}
+      {tab === "answers" && (
+        <div>
+          <div className="panel review-question-picker">
+            <label>
+              Chọn câu trả lời
+              <select
+                aria-label="Chọn câu trả lời"
+                value={selectedQuestion?.id || ""}
+                onChange={(e) => setQuestionId(e.target.value)}
+              >
+                {review.attempts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    Câu {a.sequence} ·{" "}
+                    {a.assessment?.score == null
+                      ? "Chưa có điểm"
+                      : `${a.assessment.score}/10`}{" "}
+                    · {a.status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!selectedQuestion && <Empty>Chưa có câu trả lời.</Empty>}
+          </div>
+          {(selectedQuestion ? [selectedQuestion] : []).map((a) => (
+            <section className="panel" key={a.id}>
+              <div className="section-title">
+                <h2>Câu {a.sequence}</h2>
+                <Badge status={a.status} />
+              </div>
+              <QuestionContent
+                text={a.question.text}
+                content={a.question.rich_content}
+              />
+              {a.processing && (
+                <div className="notice">
+                  <Badge status={a.processing.status} />
+                  {a.processing.error && (
+                    <p role="alert" className="error">
+                      {a.processing.error}
                     </p>
                   )}
-                </>
-              ) : (
-                <p>Đang chờ xử lý.</p>
+                  {canGrade && a.processing.status === "FAILED" && (
+                    <Action
+                      className="button secondary"
+                      action={async () => {
+                        await send(`/admin/attempts/${a.id}/retry-processing`);
+                        await refresh();
+                      }}
+                    >
+                      Thử xử lý lại
+                    </Action>
+                  )}
+                </div>
               )}
-            </div>
-          </div>
-          <TranscriptionReview
-            attempt={a}
-            enabled={
-              admin &&
-              a.status === "GRADED" &&
-              ["SUBMITTED", "REVIEW_REQUIRED", "COMPLETED"].includes(
-                review.status,
-              )
-            }
-            refresh={refresh}
-          />
-          {a.assessment?.retrieved_chunks?.length ? (
-            <details>
-              <summary>
-                Tài liệu RAG được sử dụng (
-                {a.assessment.retrieved_chunks.length})
-              </summary>
-              {a.assessment.retrieved_chunks.map((c) => (
-                <blockquote key={c.id}>
-                  <small>
-                    Trang/slide {c.page} · Chunk {c.id}
+              <div className="review-grid">
+                <div>
+                  <span className="eyebrow">TRANSCRIPT SINH VIÊN ĐÃ NỘP</span>
+                  <p className="transcript">
+                    {a.transcript || "Chưa có câu trả lời"}
+                  </p>
+                  <small className="muted">
+                    Độ tin cậy STT:{" "}
+                    {a.processing?.confidence_source === "unavailable"
+                      ? "Nhà cung cấp không trả độ tin cậy"
+                      : a.stt_confidence === null
+                        ? "—"
+                        : `${Math.round(a.stt_confidence * 100)}%`}
                   </small>
-                  <p>{c.content}</p>
-                </blockquote>
-              ))}
-            </details>
-          ) : null}
-        </section>
-      ))}
+                  <ReviewEvidence evidence={a.evidence} kind="VIDEO" />
+                  <ReviewEvidence evidence={a.evidence} kind="AUDIO" />
+                </div>
+                <div className="assessment">
+                  <span className="eyebrow">ĐÁNH GIÁ THEO RUBRIC</span>
+                  {a.assessment ? (
+                    <>
+                      <div className="score">
+                        {a.assessment.score ?? "—"}
+                        <small>/ 10</small>
+                      </div>
+                      <RubricNote
+                        text={a.assessment.reasoning_summary}
+                        limit={240}
+                      />
+                      {a.assessment.criteria?.map((c) => (
+                        <div className="criterion-score" key={c.name}>
+                          <strong>
+                            {c.name}: {c.score}
+                          </strong>
+                          <RubricNote text={c.comment} />
+                        </div>
+                      ))}
+                      <PronunciationScore result={a.assessment.pronunciation} />
+                      <small>
+                        {a.assessment.confidence == null ||
+                        a.assessment.error ||
+                        a.assessment.score == null
+                          ? "Chưa có độ tin cậy AI — chưa chấm thành công hoặc bài không tính điểm."
+                          : `Độ tin cậy do AI tự báo: ${Math.round(a.assessment.confidence * 100)}% (chưa được hiệu chuẩn)`}
+                      </small>
+                      {a.assessment.error_code && (
+                        <p className="error">
+                          Mã lỗi: {a.assessment.error_code}
+                        </p>
+                      )}
+                      {a.assessment.grading_exam_id && (
+                        <p className="notice">
+                          Đã chấm lại theo phiên bản đề mới; cần giảng viên xem
+                          lại. Chi tiết được lưu trong lịch sử bên dưới.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p>Đang chờ xử lý.</p>
+                  )}
+                </div>
+              </div>
+              <details className="review-reprocessing">
+                <summary>Nhận dạng, chấm lại AI & lịch sử</summary>
+                <TranscriptionReview
+                  attempt={a}
+                  enabled={
+                    admin &&
+                    a.status === "GRADED" &&
+                    ["SUBMITTED", "REVIEW_REQUIRED", "COMPLETED"].includes(
+                      review.status,
+                    )
+                  }
+                  refresh={refresh}
+                />
+              </details>
+              {a.assessment?.retrieved_chunks?.length ? (
+                <details>
+                  <summary>
+                    Tài liệu RAG được sử dụng (
+                    {a.assessment.retrieved_chunks.length})
+                  </summary>
+                  {a.assessment.retrieved_chunks.map((c) => (
+                    <blockquote key={c.id}>
+                      <small>
+                        Trang/slide {c.page} · Chunk {c.id}
+                      </small>
+                      <p>{c.content}</p>
+                    </blockquote>
+                  ))}
+                </details>
+              ) : null}
+            </section>
+          ))}
+        </div>
+      )}
     </>
   );
 }

@@ -123,6 +123,8 @@ class FakeDocker:
         self.mutations = []
 
     def __call__(self, *args):
+        if args == ("buildx", "prune", "--help"):
+            return "--max-used-space bytes"
         if args[:2] == ("container", "ls"):
             return "\n".join(row["id"] for row in self.rows)
         if args[:2] == ("container", "inspect"):
@@ -165,13 +167,9 @@ class FakeDocker:
             if not row["tags"]:
                 self.images.remove(row)
         elif args[:2] == ("buildx", "prune"):
-            assert args == (
-                "buildx",
-                "prune",
-                "--builder",
-                cleanup.BUILDER,
-                "--all",
-                "--force",
+            assert args in (
+                ("buildx", "prune", "--builder", cleanup.BUILDER, "--filter", "until=168h", "--force"),
+                ("buildx", "prune", "--builder", cleanup.BUILDER, "--max-used-space", "10GB", "--force"),
             )
         elif args == ("system", "df"):
             return "disk report"
@@ -229,10 +227,26 @@ class DockerCleanupTests(unittest.TestCase):
             {r["id"] for r in self.engine.rows},
             {"api", "worker", "web", "postgres", "foreign"},
         )
-        self.assertIn(
-            ("buildx", "prune", "--builder", cleanup.BUILDER, "--all", "--force"),
-            self.engine.mutations,
+        self.assertEqual(
+            [args for args in self.engine.mutations if args[:2] == ("buildx", "prune")],
+            [("buildx", "prune", "--builder", cleanup.BUILDER, "--filter", "until=168h", "--force"),
+             ("buildx", "prune", "--builder", cleanup.BUILDER, "--max-used-space", "10GB", "--force")],
         )
+
+    def test_old_buildx_uses_bounded_storage_flag(self):
+        with patch.object(cleanup, "docker", return_value="--keep-storage bytes") as docker:
+            cleanup.prune_cache()
+        commands = [call.args for call in docker.call_args_list]
+        self.assertEqual(commands[-1], (
+            "buildx", "prune", "--builder", cleanup.BUILDER, "--keep-storage", "10GB", "--force"))
+        self.assertNotIn("--filter", commands[-1])  # Size limit also applies to recent cache.
+        self.assertNotIn("--all", str(commands))
+
+    def test_unknown_buildx_never_falls_back_to_unbounded_prune(self):
+        with patch.object(cleanup, "docker", return_value="--force") as docker:
+            with self.assertRaisesRegex(RuntimeError, "cache left intact"):
+                cleanup.prune_cache()
+        docker.assert_called_once_with("buildx", "prune", "--help")
 
     def test_preserves_images_held_by_foreign_stopped_or_restarting_containers(self):
         self.engine.rows += [
