@@ -1,5 +1,25 @@
 # Hướng dẫn sử dụng OralAI
 
+## Xem bài theo tab và tra log (25/10/2026)
+
+Trong **Kết quả & xem lại**, mở bài của sinh viên rồi chọn **Tổng quan &
+điểm**, **Câu trả lời** hoặc **Màn hình & giám sát**. Tab Câu trả lời cho
+chọn từng câu; mở **Nhận dạng, chấm lại AI & lịch sử** để dùng chức năng
+chấm lại hiện có. Chuyển tab/câu sẽ dừng audio/video đang xem.
+
+Trong **Điều phối kỳ thi**, bấm **Danh sách thí sinh** trên thẻ kỳ thi để
+xem người được giao thi, số lượt thi và trạng thái từng lượt. Tìm theo
+MSSV/tên/email; bấm **Xem bài lần N** để mở đúng lượt. Số lượt không tính
+phiên kiểm tra thiết bị hoặc lượt đã xóa. Danh sách tự cập nhật 10 giây.
+
+Admin vào **Log hệ thống** để lọc nguồn API/WEB/AI/WORKER, mức log, model
+và mã request/tác vụ/lượt thi. Bấm dòng log để mở chi tiết; bật làm mới tự
+động khi theo dõi chấm bài. **Log xử lý** trong bài thi tự điền mã lượt
+đó. Mặc định xem 24 giờ; chọn 7 ngày khi tra bài cũ. Chưa có log có thể do
+bài xử lý trước khi triển khai hoặc log đã hết hạn (7 ngày/10.000 sự kiện).
+[Phạm vi dữ liệu và vận hành log](architecture/review-diagnostics.md).
+
+
 Bấm tên menu bên trái để quay về trang gốc của mục đó. Thao tác này có hiệu lực cả khi menu đang được chọn và bạn đang xem chi tiết bên trong; các lựa chọn/bộ lọc cục bộ được đặt lại.
 
 ## Cấp nhiều vai trò

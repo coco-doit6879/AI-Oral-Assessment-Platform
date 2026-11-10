@@ -10,6 +10,8 @@ import ExamDraftReview from "./exam-draft-review";
 import ExamRosterPicker from "./exam-roster-picker";
 
 type ExamRow = {
+  participant_count?: number;
+  sitting_count?: number;
   imported?: boolean;
   id: string;
   name: string;
@@ -48,6 +50,9 @@ export default function Examination({
   const [courses, setCourses] = useState<Course[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [initialPanel, setInitialPanel] = useState<"content" | "roster">(
+    "content",
+  );
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -101,6 +106,7 @@ export default function Examination({
           <ExamOperations
             key={exam.id}
             exam={exam}
+            initialPanel={initialPanel}
             courses={courses}
             officer={officer}
             editable={hasRole(user, "ADMIN", "TEACHER")}
@@ -139,6 +145,7 @@ export default function Examination({
                       },
                     );
                     await load();
+                    setInitialPanel("content");
                     setSelected(created.id);
                   }}
                 >
@@ -229,9 +236,26 @@ export default function Examination({
                     </div>
                     <h3>{e.name}</h3>
                     <p>{e.course_name}</p>
+                    <p>
+                      {e.participant_count ?? 0} sinh viên ·{" "}
+                      {e.sitting_count ?? 0} lượt thi
+                    </p>
                     <button
                       className="button secondary"
-                      onClick={() => setSelected(e.id)}
+                      aria-label={`Danh sách thí sinh ${e.name}`}
+                      onClick={() => {
+                        setInitialPanel("roster");
+                        setSelected(e.id);
+                      }}
+                    >
+                      Danh sách thí sinh →
+                    </button>
+                    <button
+                      className="button secondary"
+                      onClick={() => {
+                        setInitialPanel("content");
+                        setSelected(e.id);
+                      }}
                       aria-label={`Mở kỳ thi ${e.name}`}
                     >
                       Mở kỳ thi →
@@ -256,6 +280,7 @@ export default function Examination({
 
 function ExamOperations({
   exam,
+  initialPanel,
   courses,
   officer,
   editable,
@@ -264,6 +289,7 @@ function ExamOperations({
   navigate,
 }: {
   exam: ExamRow;
+  initialPanel: "content" | "roster";
   courses: Course[];
   officer: boolean;
   editable: boolean;
@@ -272,7 +298,7 @@ function ExamOperations({
   navigate: (page: string) => void;
 }) {
   const [activePanel, setActivePanel] = useState<"content" | "roster">(
-    "content",
+    initialPanel,
   );
   const [rosterLoading, setRosterLoading] = useState(true);
   const [roster, setRoster] = useState<Candidate[]>([]);
@@ -281,6 +307,7 @@ function ExamOperations({
   const [selected, setSelected] = useState<string[]>([]);
   const [review, setReview] = useState<Review | null>(null);
   const [completedOnly, setCompletedOnly] = useState(false);
+  const [search, setSearch] = useState("");
   const reviewId = review?.id;
   const openReview = async (id: string) => {
     setReview(await api<Review>(`/admin/results/${id}`));
@@ -318,12 +345,46 @@ function ExamOperations({
       .catch((e) => setError(errorText(e)))
       .finally(() => setRosterLoading(false));
   }, [loadRoster]);
+  useEffect(() => {
+    if (activePanel !== "roster" || reviewId) return;
+    let active = true;
+    let fetching = false;
+    const timer = setInterval(async () => {
+      if (document.hidden || fetching) return;
+      fetching = true;
+      try {
+        const rows = await api<Candidate[]>(`/admin/exams/${exam.id}/roster`);
+        if (active) {
+          setRoster(rows);
+          setSelected((ids) =>
+            ids.filter((id) =>
+              rows.some(
+                (row) => row.student_id === id && !row.sessions?.length,
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (active) setError(errorText(e));
+      } finally {
+        fetching = false;
+      }
+    }, 10000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [activePanel, reviewId, exam.id]);
   const completed = (row: Candidate) =>
     (row.sessions ?? []).some((sitting) =>
       ["SUBMITTED", "REVIEW_REQUIRED", "COMPLETED"].includes(sitting.status),
     );
   const visibleRoster = roster.filter(
-    (row) => !completedOnly || completed(row),
+    (row) =>
+      (!completedOnly || completed(row)) &&
+      `${row.name} ${row.email} ${row.student_number}`
+        .toLocaleLowerCase("vi")
+        .includes(search.trim().toLocaleLowerCase("vi")),
   );
   const schedulable = visibleRoster.filter(
     (row) => !(row.sessions ?? []).length,
@@ -447,6 +508,24 @@ function ExamOperations({
         aria-label="Sinh viên và lịch thi"
       >
         <h2>Danh sách sinh viên ({roster.length})</h2>
+        <p className="muted">
+          {
+            roster.filter((r) =>
+              r.sessions?.some((s) => s.status === "IN_PROGRESS"),
+            ).length
+          }{" "}
+          đang thi · {roster.filter(completed).length} đã nộp bài. Số lượt thi
+          không tính phiên kiểm tra thiết bị và lượt đã xóa. Danh sách tự cập
+          nhật mỗi 10 giây.
+        </p>
+        <label>
+          Tìm sinh viên theo tên, MSSV hoặc email
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
         {officer && (
           <div className={styles.actions}>
             <a
@@ -584,6 +663,9 @@ function ExamOperations({
               />
               Chọn tất cả sinh viên chưa tạo phiên thi
             </label>
+            {!visibleRoster.length && (
+              <Empty>Không có sinh viên phù hợp với bộ lọc.</Empty>
+            )}
             <div className="table-wrap">
               <table>
                 <thead>
@@ -594,6 +676,7 @@ function ExamOperations({
                     <th>Email</th>
                     <th>Mở vào thi</th>
                     <th>Đóng vào thi</th>
+                    <th>Số lượt thi</th>
                     <th>Bài thi & kết quả</th>
                   </tr>
                 </thead>
@@ -628,6 +711,13 @@ function ExamOperations({
                       <td>{r.email}</td>
                       <td>{date(r.opens_at)}</td>
                       <td>{date(r.closes_at)}</td>
+                      <td>
+                        {
+                          (r.sessions ?? []).filter(
+                            (s) => s.status !== "DEVICE_CHECK",
+                          ).length
+                        }
+                      </td>
                       <td>
                         {r.sessions?.length
                           ? r.sessions.map((sitting) => (

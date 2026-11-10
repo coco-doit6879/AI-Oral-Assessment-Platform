@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     local_llm_timeout: int = Field(default=600, ge=10, le=900)
     local_review_llm_model: str = Field(default="", max_length=150, pattern=r"^[a-zA-Z0-9._:/-]*$")
     local_llm_cpu_only: bool = False
+    local_llm_cpu_threads: int = Field(default=0, ge=0)
     llm_model: str = "gemini-2.5-flash"
     embedding_model: str = "gemini-embedding-001"
     top_k: int = Field(default=5, ge=1, le=20)
@@ -36,7 +37,7 @@ class Settings(BaseSettings):
     stt_provider: Literal["local", "local_server", "google", "gemini"] = "local_server"
     stt_model: str = "base"
     stt_language: str = "vi"
-    stt_cpu_threads: int = Field(default=1, ge=1, le=8)
+    stt_cpu_threads: int = Field(default=0, ge=0)
     worker_serial: bool = True
     gopt_enabled: bool = False
     gopt_url: str = "http://gopt:8000"

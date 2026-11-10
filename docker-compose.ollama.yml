@@ -5,23 +5,20 @@ services:
       LOCAL_LLM_URL: http://ollama:11434
       LOCAL_REVIEW_LLM_MODEL: ${LOCAL_REVIEW_LLM_MODEL:-qwen2.5:3b}
       LOCAL_LLM_CPU_ONLY: "true"
+      LOCAL_LLM_CPU_THREADS: "0"
     depends_on:
       ollama:
         condition: service_healthy
   worker:
+    command: [env, -u, OMP_NUM_THREADS, -u, OPENBLAS_NUM_THREADS, -u, MKL_NUM_THREADS, -u, NUMEXPR_NUM_THREADS, python, -m, app.worker]
     environment:
       ORAL_OLLAMA_ENABLED: "true"
       LOCAL_LLM_URL: http://ollama:11434
       LOCAL_REVIEW_LLM_MODEL: ${LOCAL_REVIEW_LLM_MODEL:-qwen2.5:3b}
       LOCAL_LLM_CPU_ONLY: "true"
+      LOCAL_LLM_CPU_THREADS: "0"
       WORKER_SERIAL: "true"
-      STT_CPU_THREADS: "1"
-      OMP_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
-    cpus: ${WORKER_CPUS:-1.0}
-    mem_limit: ${WORKER_MEMORY:-2g}
-    memswap_limit: ${WORKER_MEMORY:-2g}
+      STT_CPU_THREADS: "0"
     depends_on:
       ollama:
         condition: service_healthy
@@ -39,10 +36,6 @@ services:
       OLLAMA_KEEP_ALIVE: "0"
     volumes:
       - ollama_data:/root/.ollama
-    cpus: ${ORAL_OLLAMA_CPUS:-1.0}
-    mem_limit: ${ORAL_OLLAMA_MEMORY:-4g}
-    memswap_limit: ${ORAL_OLLAMA_MEMORY:-4g}
-    pids_limit: 256
     security_opt:
       - no-new-privileges:true
     healthcheck:

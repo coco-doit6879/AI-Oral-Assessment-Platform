@@ -82,6 +82,8 @@ def test_practice_skips_but_required_pronunciation_never_silently_skips(context,
         assert result == original
     else:
         assert result["status"] == "FAILED" and result["score"] is None
+        assert result["pronunciation"]["reason_code"] == (
+            "GOPT_DISABLED" if not enabled else "LANGUAGE_UNSUPPORTED")
     assert not requests
 
 
@@ -94,6 +96,8 @@ def test_provider_failure_retains_content_and_does_not_fabricate_score(context, 
     assert result["score"] is None and result["review_required"]
     assert result["criteria"] == success_grade()["criteria"]
     assert result["pronunciation"]["status"] == "FAILED"
+    assert result["pronunciation"]["reason_code"] == (
+        {429: "GOPT_BUSY", 503: "GOPT_HTTP_ERROR"}.get(status, "GOPT_INVALID_RESPONSE"))
     assert "scores" not in result["pronunciation"] and "secret" not in str(result)
 
 
@@ -109,6 +113,10 @@ def test_bad_evidence_never_sent(context, monkeypatch, problem):
     requests = response(monkeypatch)
     result = pronunciation.assess(db, exam, attempt, "" if problem == "empty_transcript" else "Answer", success_grade())
     assert result["pronunciation"]["status"] == "FAILED" and not requests
+    assert result["pronunciation"]["reason_code"] == {
+        "checksum": "AUDIO_CHECKSUM_MISMATCH", "size": "AUDIO_TOO_LARGE",
+        "missing": "AUDIO_MISSING", "empty_transcript": "TRANSCRIPT_EMPTY",
+    }[problem]
 
 
 def test_queue_calls_gopt_after_stt_and_content_and_can_retry_failure(env, monkeypatch):

@@ -2,25 +2,23 @@ services:
   api:
     environment:
       GOPT_ENABLED: "true"
+      LOCAL_LLM_CPU_THREADS: "0"
       GOPT_URL: http://gopt:8000
   worker:
+    command: [env, -u, OMP_NUM_THREADS, -u, OPENBLAS_NUM_THREADS, -u, MKL_NUM_THREADS, -u, NUMEXPR_NUM_THREADS, python, -m, app.worker]
     environment:
       GOPT_ENABLED: "true"
+      LOCAL_LLM_CPU_THREADS: "0"
       GOPT_URL: http://gopt:8000
       GOPT_TIMEOUT: ${GOPT_TIMEOUT:-960}
       GOPT_MAX_AUDIO_MB: ${GOPT_MAX_AUDIO_MB:-24}
       WORKER_SERIAL: "true"
-      STT_CPU_THREADS: "1"
-      OMP_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
-    cpus: ${WORKER_CPUS:-1.0}
-    mem_limit: ${WORKER_MEMORY:-2g}
-    memswap_limit: ${WORKER_MEMORY:-2g}
+      STT_CPU_THREADS: "0"
     depends_on:
       gopt:
         condition: service_healthy
   gopt:
+    command: [env, -u, OMP_NUM_THREADS, -u, OPENBLAS_NUM_THREADS, -u, MKL_NUM_THREADS, -u, NUMEXPR_NUM_THREADS, python, -m, uvicorn, "server:app", --host, "0.0.0.0", --port, "8000", --workers, "1", --no-access-log]
     init: true
     build:
       context: ./services/gopt
@@ -30,10 +28,6 @@ services:
       GOPT_MAX_AUDIO_MB: ${GOPT_MAX_AUDIO_MB:-24}
       GOPT_MAX_AUDIO_SECONDS: ${GOPT_MAX_AUDIO_SECONDS:-120}
       GOPT_JOB_TIMEOUT: ${GOPT_JOB_TIMEOUT:-900}
-    cpus: ${GOPT_CPUS:-1.0}
-    mem_limit: ${GOPT_MEMORY:-2g}
-    memswap_limit: ${GOPT_MEMORY:-2g}
-    pids_limit: 128
     read_only: true
     tmpfs:
       - /tmp:size=512m,mode=1777

@@ -2,6 +2,99 @@
 
 [README](../README.md#hướng-dẫn-theo-nhu-cầu) · [Build desktop](desktop-build.md)
 
+## AI không quota CPU/RAM, vẫn chấm tuần tự — 26/10/2026
+
+- **27 ca API đạt, 1 bỏ qua trên SQLite:** chấm local với luồng tự động hoặc
+  cấu hình riêng, Ollama không nhận `num_thread` khi auto, Whisper nhận
+  `cpu_threads=0` nhưng chỉ một inference worker; hồi quy lỗi và khóa worker.
+- **4 ca worker đạt trên PostgreSQL thật**, gồm ca đã bỏ qua ở SQLite:
+  database tạm qua `pgserver`, bật extension vector trước khi tạo schema;
+  một kết nối giữ advisory lock thì worker khác không gọi xử lý. Không dùng
+  database production. Khóa nhả sau tác vụ/lỗi vẫn được kiểm tra.
+- **18 ca GOPT đạt:** khởi tạo engine không ép luồng PyTorch, chặn request
+  đồng thời, nhả khóa sau lỗi, timeout tiến trình, audio/đặc trưng/assets.
+  Model được giả lập; `kaldiio` cài vào thư mục tạm, không tải trọng số.
+- **9 ca deploy đạt:** Compose thật với bốn tổ hợp overlay; không còn quota
+  CPU/RAM/swap/PID, credential cũ không khôi phục hạn mức, worker luôn tuần
+  tự và lệnh khởi chạy gỡ biến OMP/BLAS/MKL/NumExpr cũ.
+- Ruff và `git diff --check` đạt. Chưa build image GOPT mới hoặc xác nhận
+  container đang chạy trên Jenkins; cần build lại GOPT để nhận code engine.
+
+## RAM worker/GOPT và chấm tuần tự — 26/10/2026
+
+- **9 ca deploy đạt:** Compose thật xác nhận worker/GOPT có RAM và RAM+swap
+  4 GiB, CPU 3, `WORKER_SERIAL=true` trong các tổ hợp overlay.
+- **3 ca worker đạt, 1 bỏ qua:** khóa chống chạy đồng thời, nhả khóa khi lỗi
+  và đường đi khóa PostgreSQL bằng giả lập; ca khóa PostgreSQL thật bỏ qua
+  vì môi trường hiện dùng SQLite.
+- **6 ca GOPT HTTP đạt:** chặn request đồng thời, healthcheck vẫn đáp ứng,
+  nhả khóa sau lỗi và giới hạn upload. Engine được giả lập, không tải model.
+  Cài `kaldiio==2.18.1` vào thư mục tạm cho test, không thay môi trường dự án.
+- Ruff đạt; chưa xác minh credential Jenkins/container production.
+
+## CPU AI local — 26/10/2026
+
+- **23 ca API đạt:** chấm lại local với 1/3 luồng Ollama, không gọi cloud,
+  giữ audio/đánh giá cũ khi lỗi; hồi quy log AI.
+- **9 ca deploy đạt:** Compose thật với bốn tổ hợp overlay; CPU mặc định 3,
+  RAM giữ nguyên, số luồng đúng cho API/worker/GOPT và credential ghi đè
+  vẫn được giữ khi gộp hai overlay. Ruff đạt.
+- AI/HTTP được giả lập trong test API; chưa benchmark trên server thật,
+  chưa xác nhận cập nhật credential hoặc CPU container đang chạy.
+
+## Tối ưu Jenkins — 26/10/2026
+
+- **25 ca đạt:** 12 ca cleanup, 5 ca build/reuse MinIO, 8 ca deploy; kiểm tra
+  Compose thật với bốn tổ hợp bật/tắt Ollama/GOPT. Ruff đạt cho Python thay đổi.
+- Cleanup vẫn bảo vệ project khác, image đang chạy, bản trước và tình huống
+  tranh chấp/xóa lỗi; xác minh dọn có giới hạn trên Buildx mới/cũ, không quay
+  về xóa toàn bộ cache khi thiếu hỗ trợ.
+- MinIO kiểm tra image khớp/thiếu nhãn/thiếu image, đổi nội dung/tên/thêm file,
+  lỗi build và kiểm tra binary; tag khớp Compose. Lệnh Docker dùng giả lập.
+- Log thời gian deploy không lộ command/output riêng tư. Chưa chạy pipeline
+  Jenkins thật hoặc benchmark build có cache; không khẳng định mức giảm phút.
+
+## Log lỗi phát âm — 25/10/2026
+
+- **48 ca đạt**: `test_pronunciation.py`, `test_local_audio_review.py`,
+  `test_ai_diagnostics.py`, `test_diagnostic_logs.py`; Ruff đạt.
+- Kiểm thử đi qua endpoint yêu cầu chấm lại, worker, kho log và endpoint
+  admin đọc log. Xác minh lỗi GOPT tắt, sai ngôn ngữ, timeout, mất kết nối,
+  HTTP 422/429/503 xuất hiện khi lọc AI / ERROR / model / mã tác vụ.
+- Kiểm tra thông báo cụ thể, giữ điểm cũ, không lưu transcript/response/
+  exception thô. Kiểm tra thiếu audio, quá dung lượng, checksum, transcript
+  rỗng và kết quả sai schema; các ca chấm thành công vẫn đạt.
+- Model/HTTP được giả lập, database tạm; chưa kiểm tra tác vụ người dùng
+  trên server hoặc xác nhận triển khai domain chính.
+
+## Xem bài theo tab, log hệ thống và danh sách thí sinh — 25/10/2026
+
+| Nhóm | Kết quả |
+| --- | --- |
+| API SQLite toàn bộ | **226 đạt, 10 bỏ qua** theo điều kiện môi trường của suite |
+| Playwright Chromium | **26 đạt** trong lượt chạy cuối |
+| Node API retry / proxy | **6 đạt** |
+| Kiểm tra tĩnh và build | Ruff, ESLint, TypeScript và Next production build đạt |
+
+API kiểm tra quyền admin với log, chặn người chưa đăng nhập và các vai trò
+khác; lọc/pagination/correlation, giới hạn 7 ngày/10.000 sự kiện, rate limit
+WEB, chuẩn hóa route và loại bỏ dữ liệu nhạy cảm. Có ca chạy hàng đợi STT →
+chấm và đối chiếu log API/worker/AI bằng ID lượt thi; kho log lỗi không làm
+hỏng API nghiệp vụ. Tổng lượt thi loại phiên kiểm tra thiết bị/lượt đã xóa,
+đếm nhiều lượt và giữ phạm vi quyền.
+
+Giao diện kiểm tra các tab, chỉ dựng một câu trả lời, dừng media khi chuyển
+tab, mở log theo lượt thi, quyền nhiều vai trò, lọc/phân trang log và báo lỗi
+JavaScript chỉ gửi metadata. Kiểm tra roster tìm sinh viên, mở thẳng danh
+sách từ thẻ kỳ thi, mở đúng bài, quay lại giữ bộ lọc; hồi quy chấm lại cloud,
+điểm/rubric, retake và hồ sơ sinh viên. Đã kiểm tra ảnh giao diện câu trả lời,
+log và điều phối; layout log/media ở 1440px/768px, điều phối ở 1440px/390px.
+
+Kiểm thử dùng database tạm, API/AI giả lập ở các ca tương ứng, không gọi
+model trả phí hoặc thay đổi dữ liệu production. Hai kỳ vọng UI cũ (payload
+cấu hình STT và nhãn chọn sinh viên) đã được cập nhật theo hành vi hiện có.
+Không cần migration mới; chưa xác nhận Jenkins/domain chính triển khai bản này.
+
 ## Editor câu hỏi, camera và audio từng câu — 22/10/2026
 
 Kiểm thử local với database tạm; không thay đổi môn, đề hoặc bài làm trên

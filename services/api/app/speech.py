@@ -15,7 +15,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
-from . import ai, google_credentials
+from . import ai, diagnostics, google_credentials
 from .audio_processing import prepare_audio
 from .db import get_db
 from .models import Audit, Course, Exam, ExamSession, SystemSetting
@@ -263,6 +263,15 @@ def gemini_transcribe(path, language, model_name=None, hotwords=None):
 
 
 def transcribe_file(path, speech_policy=None):
+    cfg = settings()
+    policy = speech_policy or {}
+    provider = policy.get("provider", cfg.stt_provider)
+    model = policy.get("model") or (cfg.gemini_stt_model if provider == "gemini" else cfg.stt_model if provider == "local_server" else "google-speech")
+    with diagnostics.operation("speech.transcribe", provider=provider, model=model):
+        return _transcribe_file(path, speech_policy)
+
+
+def _transcribe_file(path, speech_policy=None):
     cfg = settings()
     config = speech_policy or SpeechPolicy(provider=cfg.stt_provider, language=cfg.stt_language).model_dump()
     if config["provider"] not in {"google", "gemini", "local_server"}:

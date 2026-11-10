@@ -1628,3 +1628,31 @@ fieldset label {
 .question-editor > small, .question-editor > .error { display: block; margin: 8px 12px; }
 .question-editor-document .ProseMirror-selectednode { outline: 2px solid #1b7774; }
 .desktop-main .device-panel .camera-preview { width: min(100%, 240px) !important; height: auto !important; aspect-ratio: var(--camera-ratio, 4/3); max-height: none !important; margin: 0 auto; }
+
+/* Candidate review and diagnostic event browser */
+.review-tabs { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1rem; }
+.review-tabs button { padding: .65rem 1rem; border: 1px solid var(--border, #d9e1ea); border-radius: .6rem; background: white; color: inherit; cursor: pointer; }
+.review-tabs button[aria-pressed="true"] { background: #eaf2ff; border-color: #3875c9; color: #20569e; font-weight: 600; }
+.review-tabs button:focus-visible { outline: 2px solid #3875c9; outline-offset: 2px; }
+.review-reprocessing { margin-top: 1rem; }
+.review-reprocessing > summary, .log-event > summary { cursor: pointer; padding: .75rem 0; }
+.log-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; align-items: end; }
+.log-filters label { display: grid; gap: .35rem; min-width: 0; }
+.log-filters input, .log-filters select { width: 100%; min-width: 0; }
+.diagnostic-logs .log-auto { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: .5rem; margin: 1rem 0; }
+.log-auto input { width: auto; }
+.log-events { margin: 1rem 0; }
+.log-event { border-top: 1px solid var(--border, #d9e1ea); overflow-wrap: anywhere; }
+.log-event summary { display: grid; grid-template-columns: 160px 120px minmax(0, 1fr) minmax(0, 1fr); gap: .5rem; align-items: start; }
+.log-event summary::before { content: "▸ Chi tiết"; grid-column: 1 / -1; font-size: .8rem; }
+.log-event[open] summary::before { content: "▾ Thu gọn"; }
+.log-event dl { margin: 0 0 1rem; padding: .75rem; background: #f6f8fb; border-radius: .5rem; }
+.log-event dt { font-weight: 600; font-size: .85rem; }
+.log-event dd { margin: 0 0 .5rem; white-space: pre-wrap; }
+@media (max-width: 800px) {
+  .log-event summary { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 540px) {
+  .log-filters, .log-event summary { grid-template-columns: 1fr; }
+  .review-tabs button { flex: 1 1 45%; }
+}

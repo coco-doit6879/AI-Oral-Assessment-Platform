@@ -15,6 +15,8 @@ import {
 import { api, send, User } from "../components/api";
 import { Action, Form, Field } from "../components/shared";
 import Academic from "../components/academic";
+import DiagnosticLogs from "../components/diagnostic-logs";
+import { reportWebEvent } from "../components/api";
 import Admin from "../components/admin";
 import Student from "../components/student";
 import GoogleLogin from "../components/google-login";
@@ -28,6 +30,35 @@ export default function Home() {
     [loading, setLoading] = useState(true),
     [page, setPage] = useState("dashboard"),
     [navigationVersion, setNavigationVersion] = useState(0);
+  useEffect(() => {
+    if (!user) return;
+    const error = (event: ErrorEvent) =>
+      reportWebEvent(
+        "client_error",
+        "/",
+        "GET",
+        undefined,
+        undefined,
+        page,
+        event.error?.name || "UnknownError",
+      );
+    const rejection = (event: PromiseRejectionEvent) =>
+      reportWebEvent(
+        "unhandled_rejection",
+        "/",
+        "GET",
+        undefined,
+        undefined,
+        page,
+        event.reason?.name || "UnknownError",
+      );
+    window.addEventListener("error", error);
+    window.addEventListener("unhandledrejection", rejection);
+    return () => {
+      window.removeEventListener("error", error);
+      window.removeEventListener("unhandledrejection", rejection);
+    };
+  }, [user, page]);
   const navigate = (destination: string) => {
     setPage(destination);
     // A menu click always opens its root, including the currently active menu.
@@ -222,6 +253,7 @@ export default function Home() {
                 icon: ShieldCheck,
               },
               { id: "settings", label: "Cấu hình hệ thống", icon: AudioLines },
+              { id: "logs", label: "Log hệ thống", icon: ShieldCheck },
             ]
           : []),
       ];
@@ -307,6 +339,8 @@ export default function Home() {
           )}
           {["classes", "departments"].includes(page) ? (
             <Academic key={page} user={user} page={page} />
+          ) : page === "logs" && hasRole(user, "ADMIN") ? (
+            <DiagnosticLogs />
           ) : page === "storage" && hasRole(user, "ADMIN") ? (
             <StorageManager />
           ) : page === "examination" && !isStudent ? (

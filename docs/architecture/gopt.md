@@ -83,11 +83,11 @@ Nút chấm riêng transcript đã nộp không còn trên UI; API cũ vẫn gi�
 - Transcript đã nộp, audio, rubric, nguồn kiến thức và đánh giá trước được giữ nguyên
   trong lịch sử. Chỉ cập nhật đánh giá hiện tại khi toàn bộ pipeline thành công.
   STT/LLM/GOPT lỗi thì review FAILED, giữ đánh giá trước; gửi lại yêu cầu để chạy từ đầu.
-- Review local yêu cầu Ollama chạy `num_thread=1`, `num_gpu=0`, `keep_alive=0` để
+- Review local dùng số luồng do Ollama tự chọn (`LOCAL_LLM_CPU_THREADS=0`, không gửi `num_thread`), `num_gpu=0`, `keep_alive=0` để
   giải phóng model sau chấm. Các tùy chọn dùng [API chat Ollama](https://docs.ollama.com/api/chat)
   và [Runner options](https://github.com/ollama/ollama/blob/main/api/types.go).
-  Ollama ngoài Compose vẫn cần hạn mức RAM và cấu hình riêng; giới hạn worker không
-  giới hạn tiến trình Ollama. Dùng model đã cài tại máy, không dùng model cloud.
+  Ollama ngoài Compose có cấu hình riêng; giới hạn của worker không
+  áp dụng cho tiến trình Ollama. Dùng model đã cài tại máy, không dùng model cloud.
 
 ### Debug chấm lại và timeout
 
@@ -112,6 +112,12 @@ nếu có. Các bước gồm `review.audio_download`, `review.stt`, `review.gra
 `ollama.chat`, `gemini.generateContent`, `gopt.assess`. `frames` chỉ ghi tên file,
 dòng và hàm, không ghi nội dung exception, URL, header, transcript hay prompt.
 `review_finished` ghi trạng thái cuối `COMPLETED`/`FAILED`.
+
+Lỗi phát âm có thêm sự kiện `gopt.pronunciation` (AI / ERROR), kèm
+`reason_code` phân biệt dịch vụ tắt, ngôn ngữ, audio, timeout, kết nối, HTTP
+và kết quả sai định dạng. Lỗi trước bản sửa vẫn là WARNING; khi tra mã tác vụ
+cũ hãy bỏ bộ lọc mức/nguồn/model và mở toàn bộ thời gian còn lưu.
+Xem [cách đối chiếu log không xuất hiện](review-diagnostics.md#tra-lỗi-chấm-phát-âm-không-thấy-trên-giao-diện).
 
 Khi Ollama thành công, các số `load_duration`, `prompt_eval_duration`, `eval_duration`,
 `total_duration` trả về từ provider được giữ nguyên (nanosecond), cùng
@@ -144,9 +150,10 @@ Lọc **Chỉ sinh viên đã nộp bài** bao gồm bài đang xử lý, cần 
 | --- | --- |
 | Số bài đang xử lý | 1 trên toàn bộ worker dùng cùng PostgreSQL |
 | Số request GOPT đang chấm | 1; request đồng thời trả 429, không xếp hàng trong RAM |
-| CPU GOPT / worker | Mỗi container tối đa 1 CPU |
-| RAM GOPT / worker | Mỗi container tối đa 2 GiB, không swap vượt giới hạn |
-| Luồng PyTorch, BLAS, Whisper | 1 |
+| CPU GOPT / worker / Ollama | Không đặt quota container |
+| RAM/swap GOPT / worker / Ollama | Không đặt hạn mức container |
+| Luồng Whisper / BLAS / PyTorch | Engine tự chọn; không ép 1/3 luồng |
+| i-vector / Kaldi `nj` | Giữ một luồng i-vector và một job theo pipeline căn chỉnh hiện tại |
 | Kaldi `nj` / GPU | 1 / tắt |
 | Audio | Tối đa 24 MiB và 120 giây mỗi câu |
 | Timeout GOPT / HTTP worker | 900 / 960 giây |
@@ -162,12 +169,14 @@ worker**, không scale replica vì mỗi replica có model và khóa riêng.
 Deadline kết thúc cả nhóm tiến trình Kaldi; `init: true` thu hồi tiến trình con
 để tránh tích lũy zombie sau timeout.
 
-Các biến có trong `.env.example`: `GOPT_CPUS`, `GOPT_MEMORY`, `WORKER_CPUS`,
-`WORKER_MEMORY`, `GOPT_MAX_AUDIO_MB`, `GOPT_MAX_AUDIO_SECONDS`, `GOPT_JOB_TIMEOUT`,
-`GOPT_TIMEOUT`. Giữ HTTP timeout lớn hơn job timeout ít nhất 60 giây. Các giới hạn
-container không phải cam kết tổng RAM server: PostgreSQL/web/STT và Ollama (nếu
-chạy bên ngoài Compose) vẫn cần RAM riêng. Bắt đầu với Whisper `base`/`tiny` và
-đo bằng `docker stats` trên phần cứng thật trước khi tăng thời lượng.
+Không còn dùng các biến `*_CPUS`, `*_MEMORY`, `GOPT_BLAS_THREADS` để giới hạn
+container. `STT_CPU_THREADS=0` dùng mặc định của CTranslate2; xem
+[tài liệu Whisper/CTranslate2](https://opennmt.net/CTranslate2/python/ctranslate2.models.Whisper.html).
+Giữ `GOPT_MAX_AUDIO_MB`, `GOPT_MAX_AUDIO_SECONDS`, `GOPT_JOB_TIMEOUT`,
+`GOPT_TIMEOUT`; HTTP timeout lớn hơn job timeout ít nhất 60 giây.
+Một bài có thể dùng nhiều CPU/RAM dù hàng đợi chạy tuần tự; kiểm tra tài nguyên
+thực tế bằng `docker stats`. Cần build lại image GOPT để bỏ lệnh ép luồng
+PyTorch của phiên bản cũ; xem [triển khai Jenkins](../jenkins.md#ai-không-giới-hạn-cpuram-chấm-tuần-tự--26102026).
 
 ## Kiểm tra
 

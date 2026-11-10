@@ -79,6 +79,10 @@ for (const kind of ["legacy-error", "error", "demo", "valid-zero"]) {
       .click();
     await selectResultExam(page);
     await page.getByRole("button", { name: "Xem bài →" }).click();
+    await page.getByRole("button", { name: /^Câu trả lời/ }).click();
+    await page
+      .getByText("Nhận dạng, chấm lại AI & lịch sử", { exact: true })
+      .click();
     if (kind === "valid-zero") {
       await expect(page.getByText(/Độ tin cậy do AI tự báo: 0%/)).toBeVisible();
     } else {

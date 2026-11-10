@@ -2,4 +2,5 @@ fastapi==0.115.12
 uvicorn==0.34.2
 python-multipart==0.0.20
 numpy==2.2.5
-kaldiio==2.18.1
+transformers==4.49.0
+soundfile==0.13.1

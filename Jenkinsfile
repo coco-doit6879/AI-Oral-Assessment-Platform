@@ -38,6 +38,7 @@ docker compose version
 docker buildx version
 python3 -m unittest discover -s tests -p test_docker_cleanup.py -v
 python3 -m unittest discover -s tests -p test_jenkins_deploy.py -v
+python3 -m unittest discover -s tests -p test_build_minio.py -v
 docker info --format '{{.ServerVersion}}'
 docker network inspect nginx-network --format '{{.Name}}'
 test -f docker-compose.yml
@@ -73,15 +74,12 @@ docker buildx inspect "$ORAL_BUILDER" --bootstrap
         }
         stage('Build MinIO') {
             steps {
-                sh '''set -eu
-docker buildx build --builder "$ORAL_BUILDER" --load -t oral-assessment-minio:RELEASE.2025-09-07T16-13-09Z-source services/minio
-docker run --rm --network none oral-assessment-minio:RELEASE.2025-09-07T16-13-09Z-source --version
-'''
+                sh 'python3 scripts/build_minio.py'
             }
         }
         stage('Build API') {
             steps {
-                sh 'docker buildx build --builder "$ORAL_BUILDER" --load --label uk.paperlens.oral.project=oral-assessment-web -t "$ORAL_API_IMAGE" services/api'
+                sh 'docker buildx build --builder "$ORAL_BUILDER" --progress=plain --load --label uk.paperlens.oral.project=oral-assessment-web -t "$ORAL_API_IMAGE" services/api'
             }
         }
         stage('Test API - isolated SQLite') {
@@ -101,9 +99,9 @@ docker cp data "$ORAL_TEST_CONTAINER:/app/data"
         stage('Build and check web') {
             steps {
                 sh '''set -eu
-docker buildx build --builder "$ORAL_BUILDER" --load --label uk.paperlens.oral.project=oral-assessment-web --target build -t "$ORAL_WEB_CHECK_IMAGE" -f apps/admin-web/Dockerfile .
+docker buildx build --builder "$ORAL_BUILDER" --progress=plain --load --label uk.paperlens.oral.project=oral-assessment-web --target build -t "$ORAL_WEB_CHECK_IMAGE" -f apps/admin-web/Dockerfile .
 docker run --rm --label uk.paperlens.oral.project=oral-assessment-web --network none "$ORAL_WEB_CHECK_IMAGE" sh -c 'npm run lint --workspace apps/admin-web && npm run typecheck --workspace apps/admin-web'
-docker buildx build --builder "$ORAL_BUILDER" --load --label uk.paperlens.oral.project=oral-assessment-web -t "$ORAL_WEB_IMAGE" -f apps/admin-web/Dockerfile .
+docker buildx build --builder "$ORAL_BUILDER" --progress=plain --load --label uk.paperlens.oral.project=oral-assessment-web -t "$ORAL_WEB_IMAGE" -f apps/admin-web/Dockerfile .
 '''
             }
         }
@@ -128,6 +126,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from urllib.parse import quote
 
 PROJECT = \'oral-assessment-web\'
@@ -139,7 +138,10 @@ def abort(message):
     raise SystemExit(message)
 
 def command(args, env, label):
+    started = time.monotonic()
+    print(label + \'...\', flush=True)
     result = subprocess.run(args, env=env, text=True, capture_output=True)
+    print(label + \' finished in \' + format(time.monotonic() - started, \'.1f\') + \'s\', flush=True)
     if result.returncode:
         abort(label + \' failed. Output hidden because it may contain credentials. No volumes deleted.\')
     return result.stdout
@@ -325,9 +327,10 @@ def main():
         for svc in config[\'services\']:
             if actual[\'services\'][svc].get(\'environment\', {}) != config[\'services\'][svc].get(\'environment\', {}):
                 abort(\'Environment changed during Compose interpolation. No deployment made.\')
-        command([\'docker\', \'image\', \'inspect\', config[\'services\'][\'minio\'][\'image\'], \'--format\', \'{{.Id}}\'], child, \'Built MinIO image lookup\')
-        print(\'Pulling PostgreSQL and Redis images; using locally built MinIO...\', flush=True)
-        command(compose + [\'pull\', \'postgres\', \'redis\'], child, \'Infrastructure image pull\')
+        for name in (\'postgres\', \'redis\', \'minio\'):
+            command([\'docker\', \'image\', \'inspect\', config[\'services\'][name][\'image\'], \'--format\', \'{{.Id}}\'],
+                    child, name + \' prepared image lookup\')
+        print(\'Using PostgreSQL/Redis images pulled during preflight and the prepared MinIO image...\', flush=True)
         prepare_local_ai(compose, child, config)
         if current_pg:
             backup_dir = Path(os.environ.get(\'JENKINS_HOME\', \'/var/jenkins_home\')) / \'oral-backups\'
